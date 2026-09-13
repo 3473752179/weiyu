@@ -55,6 +55,7 @@ struct Index {
   @State private archiveKind: string = 'draft';
   @State private selectedRecipientIndex: number = -1;
   @State private selectedEmotionIndex: number = -1;
+  @State private emotionConfirmLabel: string = '是什么呢';
   @State private letterContent: string = '';
   @State private moodTag: string = '私语';
   @State private isAnonymous: boolean = false;
@@ -75,6 +76,16 @@ struct Index {
   @State private emotionEntryOpacity: number = 0;
   @State private ritualEntryOffset: number = 18;
   @State private ritualEntryOpacity: number = 0;
+  @State private confusedEmotionFrameIndex: number = 0;
+  private confusedEmotionTimer: number = -1;
+  @State private regretEmotionFrameIndex: number = 0;
+  private regretEmotionTimer: number = -1;
+  @State private angryEmotionFrameIndex: number = 0;
+  private angryEmotionTimer: number = -1;
+  @State private sadEmotionFrameIndex: number = 0;
+  private sadEmotionTimer: number = -1;
+  @State private happyEmotionFrameIndex: number = 0;
+  private happyEmotionTimer: number = -1;
 
   aboutToAppear(): void {
     if (this.initialized) {
@@ -146,6 +157,30 @@ struct Index {
     return this.echoCards[0];
   }
 
+  private stopAllEmotionAnimations(): void {
+    this.stopConfusedEmotionAnimation();
+    this.stopRegretEmotionAnimation();
+    this.stopAngryEmotionAnimation();
+    this.stopSadEmotionAnimation();
+    this.stopHappyEmotionAnimation();
+  }
+
+  private startSelectedEmotionAnimation(index: number): void {
+    this.stopAllEmotionAnimations();
+    const emotionId: string = this.emotionOptions[index].id;
+    if (emotionId === 'confused') {
+      this.startConfusedEmotionAnimation();
+    } else if (emotionId === 'regret') {
+      this.startRegretEmotionAnimation();
+    } else if (emotionId === 'angry') {
+      this.startAngryEmotionAnimation();
+    } else if (emotionId === 'sad') {
+      this.startSadEmotionAnimation();
+    } else if (emotionId === 'happy') {
+      this.startHappyEmotionAnimation();
+    }
+  }
+
   private playHomeEntryAnimation(): void {
     this.homeEntryOpacity = 0;
     this.homeEntryOffset = 18;
@@ -188,6 +223,184 @@ struct Index {
     }, 60);
   }
 
+  private startConfusedEmotionAnimation(): void {
+    if (this.confusedEmotionTimer !== -1) {
+      return;
+    }
+
+    this.confusedEmotionFrameIndex = 0;
+    this.confusedEmotionTimer = setInterval(() => {
+      this.confusedEmotionFrameIndex = (this.confusedEmotionFrameIndex + 1) % 6;
+    }, 170) as number;
+  }
+
+  private stopConfusedEmotionAnimation(): void {
+    if (this.confusedEmotionTimer !== -1) {
+      clearInterval(this.confusedEmotionTimer);
+      this.confusedEmotionTimer = -1;
+    }
+    this.confusedEmotionFrameIndex = 0;
+  }
+
+  private getConfusedEmotionFrame(): Resource {
+    switch (this.confusedEmotionFrameIndex) {
+      case 1:
+        return $r('app.media.emotion_confused_02');
+      case 2:
+        return $r('app.media.emotion_confused_03');
+      case 3:
+        return $r('app.media.emotion_confused_04');
+      case 4:
+        return $r('app.media.emotion_confused_05');
+      case 5:
+        return $r('app.media.emotion_confused_06');
+      default:
+        return $r('app.media.emotion_confused_01');
+    }
+  }
+
+  private startRegretEmotionAnimation(): void {
+    if (this.regretEmotionTimer !== -1) {
+      return;
+    }
+
+    this.regretEmotionFrameIndex = 0;
+    this.regretEmotionTimer = setInterval(() => {
+      this.regretEmotionFrameIndex = (this.regretEmotionFrameIndex + 1) % 6;
+    }, 155) as number;
+  }
+
+  private stopRegretEmotionAnimation(): void {
+    if (this.regretEmotionTimer !== -1) {
+      clearInterval(this.regretEmotionTimer);
+      this.regretEmotionTimer = -1;
+    }
+    this.regretEmotionFrameIndex = 0;
+  }
+
+  private getRegretEmotionFrame(): Resource {
+    switch (this.regretEmotionFrameIndex) {
+      case 1:
+        return $r('app.media.emotion_regret_02');
+      case 2:
+        return $r('app.media.emotion_regret_03');
+      case 3:
+        return $r('app.media.emotion_regret_04');
+      case 4:
+        return $r('app.media.emotion_regret_05');
+      case 5:
+        return $r('app.media.emotion_regret_06');
+      default:
+        return $r('app.media.emotion_regret_01');
+    }
+  }
+
+  private startAngryEmotionAnimation(): void {
+    if (this.angryEmotionTimer !== -1) {
+      return;
+    }
+
+    this.angryEmotionFrameIndex = 0;
+    this.angryEmotionTimer = setInterval(() => {
+      this.angryEmotionFrameIndex = (this.angryEmotionFrameIndex + 1) % 5;
+    }, 150) as number;
+  }
+
+  private stopAngryEmotionAnimation(): void {
+    if (this.angryEmotionTimer !== -1) {
+      clearInterval(this.angryEmotionTimer);
+      this.angryEmotionTimer = -1;
+    }
+    this.angryEmotionFrameIndex = 0;
+  }
+
+  private getAngryEmotionFrame(): Resource {
+    switch (this.angryEmotionFrameIndex) {
+      case 1:
+        return $r('app.media.emotion_angry_02');
+      case 2:
+        return $r('app.media.emotion_angry_03');
+      case 3:
+        return $r('app.media.emotion_angry_04');
+      case 4:
+        return $r('app.media.emotion_angry_05');
+      default:
+        return $r('app.media.emotion_angry_01');
+    }
+  }
+
+  private startSadEmotionAnimation(): void {
+    if (this.sadEmotionTimer !== -1) {
+      return;
+    }
+
+    this.sadEmotionFrameIndex = 0;
+    this.sadEmotionTimer = setInterval(() => {
+      this.sadEmotionFrameIndex = (this.sadEmotionFrameIndex + 1) % 6;
+    }, 160) as number;
+  }
+
+  private stopSadEmotionAnimation(): void {
+    if (this.sadEmotionTimer !== -1) {
+      clearInterval(this.sadEmotionTimer);
+      this.sadEmotionTimer = -1;
+    }
+    this.sadEmotionFrameIndex = 0;
+  }
+
+  private getSadEmotionFrame(): Resource {
+    switch (this.sadEmotionFrameIndex) {
+      case 1:
+        return $r('app.media.emotion_sad_02');
+      case 2:
+        return $r('app.media.emotion_sad_03');
+      case 3:
+        return $r('app.media.emotion_sad_04');
+      case 4:
+        return $r('app.media.emotion_sad_05');
+      case 5:
+        return $r('app.media.emotion_sad_06');
+      default:
+        return $r('app.media.emotion_sad_01');
+    }
+  }
+
+  private startHappyEmotionAnimation(): void {
+    if (this.happyEmotionTimer !== -1) {
+      return;
+    }
+
+    this.happyEmotionFrameIndex = 0;
+    this.happyEmotionTimer = setInterval(() => {
+      this.happyEmotionFrameIndex = (this.happyEmotionFrameIndex + 1) % 6;
+    }, 140) as number;
+  }
+
+  private stopHappyEmotionAnimation(): void {
+    if (this.happyEmotionTimer !== -1) {
+      clearInterval(this.happyEmotionTimer);
+      this.happyEmotionTimer = -1;
+    }
+    this.happyEmotionFrameIndex = 0;
+  }
+
+  private getHappyEmotionFrame(): Resource {
+    switch (this.happyEmotionFrameIndex) {
+      case 1:
+        return $r('app.media.emotion_happy_02');
+      case 2:
+        return $r('app.media.emotion_happy_03');
+      case 3:
+        return $r('app.media.emotion_happy_04');
+      case 4:
+        return $r('app.media.emotion_happy_05');
+      case 5:
+        return $r('app.media.emotion_happy_06');
+      default:
+        return $r('app.media.emotion_happy_01');
+    }
+  }
+
   private playRitualEntryAnimation(): void {
     this.ritualEntryOpacity = 0;
     this.ritualEntryOffset = 18;
@@ -215,12 +428,32 @@ struct Index {
 
   private chooseRecipient(index: number): void {
     this.selectedRecipientIndex = index;
+    this.selectedEmotionIndex = -1;
+    this.emotionConfirmLabel = '是什么呢';
+    this.stopAllEmotionAnimations();
     this.currentPage = 'emotion';
     this.statusText = '再选一张情绪信纸，把心情放上去。';
   }
 
   private chooseEmotion(index: number): void {
     this.selectedEmotionIndex = index;
+    this.emotionConfirmLabel = `是${this.emotionOptions[index].title}啊`;
+    if (this.emotionOptions[index].id === 'other') {
+      this.stopAllEmotionAnimations();
+      this.currentPage = 'writing';
+      this.statusText = '说不清也没关系，先慢慢写下来。';
+      return;
+    }
+    this.startSelectedEmotionAnimation(index);
+    this.statusText = `原来现在是${this.emotionOptions[index].title}啊。`;
+  }
+
+  private confirmEmotionSelection(): void {
+    if (this.selectedEmotionIndex < 0) {
+      this.statusText = '先选一种此刻更接近的心情。';
+      return;
+    }
+    this.stopAllEmotionAnimations();
     this.currentPage = 'writing';
     this.statusText = '慢慢写，暂时不用急着发送。';
   }
@@ -320,6 +553,7 @@ struct Index {
   private resetComposer(): void {
     this.selectedRecipientIndex = -1;
     this.selectedEmotionIndex = -1;
+    this.emotionConfirmLabel = '是什么呢';
     this.letterContent = '';
     this.isAnonymous = false;
     this.moodTag = '私语';
@@ -388,6 +622,23 @@ struct Index {
       return this.futureLetters;
     }
     return this.echoCards;
+  }
+
+  private getRecentLetters(limit: number): Array<LetterRecord> {
+    const merged: Array<LetterRecord> = [];
+    const seenIds: Array<number> = [];
+    const sources: Array<Array<LetterRecord>> = [this.drafts, this.sealedLetters, this.futureLetters, this.driftLetters, this.echoCards];
+
+    sources.forEach((items: Array<LetterRecord>) => {
+      items.forEach((item: LetterRecord) => {
+        if (seenIds.indexOf(item.id) === -1) {
+          seenIds.push(item.id);
+          merged.push(item);
+        }
+      });
+    });
+
+    return merged.slice(0, limit);
   }
 
   @Builder
@@ -526,27 +777,27 @@ struct Index {
   @Builder
   private buildEmotionIllustration(id: string) {
     if (id === 'sad') {
-      Image($r('app.media.emotion_sad'))
+      Image(this.getSadEmotionFrame())
         .width(88)
         .height(72)
         .objectFit(ImageFit.Contain)
     } else if (id === 'regret') {
-      Image($r('app.media.emotion_regret'))
+      Image(this.getRegretEmotionFrame())
         .width(88)
         .height(72)
         .objectFit(ImageFit.Contain)
     } else if (id === 'angry') {
-      Image($r('app.media.emotion_angry'))
+      Image(this.getAngryEmotionFrame())
         .width(88)
         .height(72)
         .objectFit(ImageFit.Contain)
     } else if (id === 'happy') {
-      Image($r('app.media.emotion_happy'))
+      Image(this.getHappyEmotionFrame())
         .width(88)
         .height(72)
         .objectFit(ImageFit.Contain)
     } else if (id === 'confused') {
-      Image($r('app.media.emotion_confused'))
+      Image(this.getConfusedEmotionFrame())
         .width(88)
         .height(72)
         .objectFit(ImageFit.Contain)
@@ -592,8 +843,16 @@ struct Index {
     .height(172)
     .padding(18)
     .margin({ bottom: 12 })
-    .backgroundColor(item.color)
+    .backgroundColor('#FFFFFF')
     .borderRadius(24)
+    .shadow({
+      radius: 16,
+      color: '#12000000',
+      offsetX: 0,
+      offsetY: 6
+    })
+    .opacity(this.selectedEmotionIndex < 0 || this.selectedEmotionIndex === index ? 1 : 0.88)
+    .scale(this.selectedEmotionIndex === index ? { x: 1.02, y: 1.02 } : { x: 1, y: 1 })
     .onClick(() => {
       this.chooseEmotion(index);
     })
@@ -898,22 +1157,16 @@ struct Index {
               this.playHomeEntryAnimation();
             })
 
-            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-              this.buildMailboxCard('草稿箱', `${this.drafts.length} 封草稿`, '#F5EFE7', 'draft')
-              this.buildMailboxCard('封存的信', `${this.sealedLetters.length} 封信件`, '#F4EEE7', 'sealed')
-              this.buildMailboxCard('未来信', `${this.futureLetters.length} 封待开启`, '#F2F4F8', 'future')
-              this.buildMailboxCard('情绪回声卡', `${this.echoCards.length} 张回声卡`, '#F5F1EA', 'echo')
-            }
-            .width('100%')
-
-            if (this.echoCards.length > 0) {
+            if (this.getRecentLetters(3).length > 0) {
               Column({ space: 10 }) {
-                Text('最近一封')
+                Text('最近几封')
                   .fontSize(18)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#403731')
                   .width('100%')
-                this.buildRecentCard(this.echoCards[0])
+                ForEach(this.getRecentLetters(3), (item: LetterRecord) => {
+                  this.buildRecentCard(item)
+                }, (item: LetterRecord) => `recent-${item.id}`)
               }
               .width('100%')
             }
@@ -945,15 +1198,11 @@ struct Index {
               .fontColor('#2E2721')
               .width('100%')
 
-            Row({ space: 12 }) {
-              this.buildStatCard('封存柜', `${this.sealedLetters.length}`, '#F6EFE7')
-              this.buildStatCard('漂流瓶', `${this.driftLetters.length}`, '#EEF4F8')
-            }
-            .width('100%')
-
-            Row({ space: 12 }) {
-              this.buildStatCard('未来信箱', `${this.futureLetters.length}`, '#F4EFE6')
-              this.buildStatCard('回声卡', `${this.echoCards.length}`, '#F6F2EA')
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+              this.buildMailboxCard('草稿箱', `${this.drafts.length} 封草稿`, '#F5EFE7', 'draft')
+              this.buildMailboxCard('封存的信', `${this.sealedLetters.length} 封信件`, '#F4EEE7', 'sealed')
+              this.buildMailboxCard('未来信', `${this.futureLetters.length} 封待开启`, '#F2F4F8', 'future')
+              this.buildMailboxCard('情绪回声卡', `${this.echoCards.length} 张回声卡`, '#F5F1EA', 'echo')
             }
             .width('100%')
 
@@ -1029,6 +1278,38 @@ struct Index {
         .onAppear(() => {
           this.playEmotionEntryAnimation();
         })
+        .onDisAppear(() => {
+          this.stopAllEmotionAnimations();
+        })
+
+        Row() {
+          Blank()
+          Row() {
+            Blank()
+            Text(this.emotionConfirmLabel)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#5F564E')
+            Blank()
+          }
+          .width('68%')
+          .padding({ top: 14, bottom: 14, left: 18, right: 18 })
+          .backgroundColor('#FFFFFF')
+          .borderRadius(18)
+          .shadow({
+            radius: 14,
+            color: '#12000000',
+            offsetX: 0,
+            offsetY: 6
+          })
+          .opacity(this.selectedEmotionIndex >= 0 ? 1 : 0.92)
+          .onClick(() => {
+            this.confirmEmotionSelection();
+          })
+          Blank()
+        }
+        .width('100%')
+        .margin({ left: 20, right: 20, bottom: 34 })
       }
       .width('100%')
     }
@@ -1173,10 +1454,6 @@ struct Index {
             .fontColor('#6D645B')
             .width('100%')
 
-          Text('🦔')
-            .fontSize(48)
-            .width('100%')
-            .textAlign(TextAlign.End)
         }
         .width('100%')
         .padding(20)
