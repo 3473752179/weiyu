@@ -1,3 +1,9 @@
+import { common } from '@kit.AbilityKit';
+import { preferences } from '@kit.ArkData';
+import { reminderAgentManager } from '@kit.BackgroundTasksKit';
+import { notificationManager } from '@kit.NotificationKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+
 interface SelectItem {
   id: string;
   title: string;
@@ -21,6 +27,19 @@ interface LetterRecord {
   echoLine: string;
   moodTag: string;
   anonymous: boolean;
+  unlockDate: string;
+  unlockAt: number;
+  reminderId: number;
+}
+
+interface StoredLetterState {
+  drafts: Array<LetterRecord>;
+  sealedLetters: Array<LetterRecord>;
+  futureLetters: Array<LetterRecord>;
+  driftLetters: Array<LetterRecord>;
+  echoCards: Array<LetterRecord>;
+  nextId: number;
+  activeEchoId: number;
 }
 
 @Entry
@@ -30,7 +49,7 @@ struct Index {
     { id: 'self', title: '写给自己', subtitle: '给此刻的自己一点温柔', emoji: '🪞', color: '#F4EEE5' },
     { id: 'someone', title: '写给某个人', subtitle: '给那个TA，说说心里话', emoji: '💌', color: '#F7F1E6' },
     { id: 'future', title: '写给未来的自己', subtitle: '给未来的自己一句话', emoji: '📅', color: '#F5EFE7' },
-    { id: 'unknown', title: '写给不会收到的人', subtitle: '有些话，只想说给风听', emoji: '🦔', color: '#EEF3F7' },
+    { id: 'unknown', title: '写给不会收到的人', subtitle: '有些话，只想说给风听', emoji: '·', color: '#EEF3F7' },
     { id: 'custom', title: '写给自定义对象', subtitle: '想写给谁，都可以由你自己定义', emoji: '✍️', color: '#F3ECE6' }
   ];
 
@@ -49,6 +68,10 @@ struct Index {
     { id: 'drift', title: '漂流', subtitle: '把信放入云朵，让它随风慢慢漂走', emoji: '☁️', color: '#EAF0F6' },
     { id: 'future', title: '寄给未来', subtitle: '把愿望留给未来的自己开启', emoji: '🗓', color: '#F4EEE4' }
   ];
+  private readonly letterStoreName: string = 'weiyu_letter_store';
+  private readonly letterStoreKey: string = 'letters_payload';
+  private readonly futureReminderHour: number = 9;
+  private readonly appBundleName: string = 'com.example.weiyu';
 
   @State private currentPage: string = 'home';
   @State private homeTab: number = 0;
@@ -68,6 +91,7 @@ struct Index {
   @State private driftLetters: Array<LetterRecord> = [];
   @State private echoCards: Array<LetterRecord> = [];
   @State private activeEchoId: number = 2;
+  @State private openedMenuId: number = -1;
   @State private homeEntryOffset: number = 18;
   @State private homeEntryOpacity: number = 0;
   @State private recipientEntryOffset: number = 18;
@@ -86,9 +110,20 @@ struct Index {
   private sadEmotionTimer: number = -1;
   @State private happyEmotionFrameIndex: number = 0;
   private happyEmotionTimer: number = -1;
+  @State private futureReminderDate: Date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  @State private futureNotificationEnabled: boolean = false;
+  @State private unlockWatcherNow: number = Date.now();
+  private unlockWatcherTimer: number = -1;
 
   aboutToAppear(): void {
+    this.startUnlockWatcher();
+    this.refreshNotificationPermissionStatus();
     if (this.initialized) {
+      return;
+    }
+
+    if (this.restoreStoredLetters()) {
+      this.initialized = true;
       return;
     }
 
@@ -106,7 +141,10 @@ struct Index {
       keywords: ['感谢', '勇敢', '今天'],
       echoLine: '先把这段话温柔地留给自己。',
       moodTag: '心语',
-      anonymous: false
+      anonymous: false,
+      unlockDate: '',
+      unlockAt: 0,
+      reminderId: 0
     };
     const echo: LetterRecord = {
       id: 2,
@@ -122,14 +160,128 @@ struct Index {
       keywords: ['想念', '晚风', '拥抱'],
       echoLine: '这句话已经被好好收下了。',
       moodTag: '想念',
-      anonymous: true
+      anonymous: true,
+      unlockDate: '',
+      unlockAt: 0,
+      reminderId: 0
     };
 
     this.drafts = [draft];
     this.sealedLetters = [echo];
     this.echoCards = [echo];
     this.activeEchoId = echo.id;
+    this.persistLetters();
     this.initialized = true;
+  }
+
+  aboutToDisappear(): void {
+    this.stopAllEmotionAnimations();
+    this.stopUnlockWatcher();
+  }
+
+  private getAbilityContext(): common.UIAbilityContext {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext;
+  }
+
+  private getLetterStore(): preferences.Preferences | null {
+    try {
+      return preferences.getPreferencesSync(this.getAbilityContext(), { name: this.letterStoreName });
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  private normalizeRecord(record: LetterRecord): LetterRecord {
+    return {
+      id: record.id,
+      date: record.date,
+      weekday: record.weekday,
+      recipient: record.recipient,
+      recipientHint: record.recipientHint,
+      emotion: record.emotion,
+      emotionHint: record.emotionHint,
+      ritual: record.ritual,
+      ritualHint: record.ritualHint,
+      content: record.content,
+      keywords: record.keywords,
+      echoLine: record.echoLine,
+      moodTag: record.moodTag,
+      anonymous: record.anonymous,
+      unlockDate: record.unlockDate ?? '',
+      unlockAt: record.unlockAt ?? 0,
+      reminderId: record.reminderId ?? 0
+    };
+  }
+
+  private restoreStoredLetters(): boolean {
+    const store: preferences.Preferences | null = this.getLetterStore();
+    if (store === null) {
+      return false;
+    }
+    const rawValue: string = store.getSync(this.letterStoreKey, '') as string;
+    if (rawValue.length === 0) {
+      return false;
+    }
+    try {
+      const saved: StoredLetterState = JSON.parse(rawValue) as StoredLetterState;
+      this.drafts = (saved.drafts ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
+      this.sealedLetters = (saved.sealedLetters ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
+      this.futureLetters = (saved.futureLetters ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
+      this.driftLetters = (saved.driftLetters ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
+      this.echoCards = (saved.echoCards ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
+      this.nextId = saved.nextId > 0 ? saved.nextId : this.getComputedNextId();
+      if (this.echoCards.length > 0) {
+        this.activeEchoId = this.containsRecordId(this.echoCards, saved.activeEchoId) ? saved.activeEchoId : this.echoCards[0].id;
+      } else {
+        this.activeEchoId = -1;
+      }
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private persistLetters(): void {
+    const store: preferences.Preferences | null = this.getLetterStore();
+    if (store === null) {
+      return;
+    }
+    const snapshot: StoredLetterState = {
+      drafts: this.drafts,
+      sealedLetters: this.sealedLetters,
+      futureLetters: this.futureLetters,
+      driftLetters: this.driftLetters,
+      echoCards: this.echoCards,
+      nextId: this.nextId,
+      activeEchoId: this.activeEchoId
+    };
+    store.putSync(this.letterStoreKey, JSON.stringify(snapshot));
+    store.flush().catch((_err: BusinessError) => {
+    });
+  }
+
+  private containsRecordId(items: Array<LetterRecord>, targetId: number): boolean {
+    let index: number = 0;
+    while (index < items.length) {
+      if (items[index].id === targetId) {
+        return true;
+      }
+      index += 1;
+    }
+    return false;
+  }
+
+  private getComputedNextId(): number {
+    let maxId: number = 0;
+    const sources: Array<Array<LetterRecord>> = [this.drafts, this.sealedLetters, this.futureLetters, this.driftLetters, this.echoCards];
+    sources.forEach((items: Array<LetterRecord>) => {
+      items.forEach((item: LetterRecord) => {
+        if (item.id > maxId) {
+          maxId = item.id;
+        }
+      });
+    });
+    return maxId + 1;
   }
 
   private getSelectedRecipient(): SelectItem {
@@ -163,6 +315,40 @@ struct Index {
     this.stopAngryEmotionAnimation();
     this.stopSadEmotionAnimation();
     this.stopHappyEmotionAnimation();
+  }
+
+  private startUnlockWatcher(): void {
+    this.unlockWatcherNow = Date.now();
+    if (this.unlockWatcherTimer !== -1) {
+      return;
+    }
+    this.unlockWatcherTimer = setInterval(() => {
+      this.unlockWatcherNow = Date.now();
+    }, 30000) as number;
+  }
+
+  private stopUnlockWatcher(): void {
+    if (this.unlockWatcherTimer !== -1) {
+      clearInterval(this.unlockWatcherTimer);
+      this.unlockWatcherTimer = -1;
+    }
+  }
+
+  private async refreshNotificationPermissionStatus(): Promise<void> {
+    try {
+      this.futureNotificationEnabled = await notificationManager.isNotificationEnabled();
+    } catch (_err) {
+      this.futureNotificationEnabled = false;
+    }
+  }
+
+  private async openFutureReminderSettings(): Promise<void> {
+    try {
+      await notificationManager.openNotificationSettings(this.getAbilityContext());
+      this.statusText = '已经帮你打开通知设置了，打开后未来信才能按时提醒。';
+    } catch (_err) {
+      this.statusText = '通知设置没有成功打开，稍后再试一次。';
+    }
   }
 
   private startSelectedEmotionAnimation(index: number): void {
@@ -417,6 +603,7 @@ struct Index {
 
   private openComposer(): void {
     this.homeTab = 0;
+    this.resetComposer();
     this.currentPage = 'recipient';
     this.statusText = '先决定，这封信想写给谁。';
   }
@@ -430,6 +617,7 @@ struct Index {
     this.selectedRecipientIndex = index;
     this.selectedEmotionIndex = -1;
     this.emotionConfirmLabel = '是什么呢';
+    this.futureReminderDate = this.getMinimumFutureDate();
     this.stopAllEmotionAnimations();
     this.currentPage = 'emotion';
     this.statusText = '再选一张情绪信纸，把心情放上去。';
@@ -467,6 +655,7 @@ struct Index {
 
     const draft: LetterRecord = this.createRecord('草稿', '暂时留在这里，等你准备好再继续');
     this.drafts = [draft, ...this.drafts.filter((item: LetterRecord) => item.id !== draft.id)];
+    this.persistLetters();
     this.statusText = '已经替你自动存进草稿箱了。';
   }
 
@@ -479,23 +668,194 @@ struct Index {
     this.statusText = '选一个属于这封信的数字仪式。';
   }
 
+  private async ensureNotificationPermission(): Promise<boolean> {
+    try {
+      const enabled: boolean = await notificationManager.isNotificationEnabled();
+      if (enabled) {
+        this.futureNotificationEnabled = true;
+        return true;
+      }
+      await notificationManager.requestEnableNotification(this.getAbilityContext());
+      this.futureNotificationEnabled = true;
+      return true;
+    } catch (err) {
+      const error: BusinessError = err as BusinessError;
+      this.futureNotificationEnabled = false;
+      if (error.code === 1600004) {
+        this.statusText = '你还没有允许通知，先打开通知设置，未来信才能按时提醒。';
+      } else {
+        this.statusText = '通知权限申请没有成功，稍后再试一次。';
+      }
+      return false;
+    }
+  }
+
+  private async scheduleFutureReminder(record: LetterRecord): Promise<number> {
+    const unlockDate: Date = new Date(record.unlockAt);
+    const reminderRequest: reminderAgentManager.ReminderRequestCalendar = {
+      reminderType: reminderAgentManager.ReminderType.REMINDER_TYPE_CALENDAR,
+      dateTime: {
+        year: unlockDate.getFullYear(),
+        month: unlockDate.getMonth() + 1,
+        day: unlockDate.getDate(),
+        hour: unlockDate.getHours(),
+        minute: unlockDate.getMinutes(),
+        second: unlockDate.getSeconds()
+      },
+      wantAgent: {
+        pkgName: this.appBundleName,
+        abilityName: 'EntryAbility'
+      },
+      title: '未来信到时间了',
+      content: `你写给未来的信，现在可以打开了。`,
+      slotType: notificationManager.SlotType.CONTENT_INFORMATION
+    };
+
+    try {
+      return await reminderAgentManager.publishReminder(reminderRequest);
+    } catch (_err) {
+      return 0;
+    }
+  }
+
+  private async confirmFutureDelivery(): Promise<void> {
+    const unlockDate: Date = this.getFutureReminderMoment(this.futureReminderDate);
+    if (unlockDate.getTime() <= Date.now()) {
+      this.statusText = '换一个还没到的日期吧。';
+      return;
+    }
+
+    const permissionGranted: boolean = await this.ensureNotificationPermission();
+    if (!permissionGranted) {
+      return;
+    }
+
+    const openDate: string = this.formatDateTime(unlockDate);
+    const originalContent: string = this.letterContent.trim();
+    let record: LetterRecord = this.createRecord('寄给未来', '把愿望留给未来的自己开启');
+    record = {
+      id: record.id,
+      date: record.date,
+      weekday: record.weekday,
+      recipient: record.recipient,
+      recipientHint: record.recipientHint,
+      emotion: record.emotion,
+      emotionHint: record.emotionHint,
+      ritual: record.ritual,
+      ritualHint: `会在 ${openDate} 重新交到你手里`,
+      content: record.content,
+      keywords: record.keywords,
+      echoLine: `等到 ${openDate}，再由未来的你亲手打开。`,
+      moodTag: record.moodTag,
+      anonymous: record.anonymous,
+      unlockDate: openDate,
+      unlockAt: unlockDate.getTime(),
+      reminderId: 0
+    };
+
+    const reminderId: number = await this.scheduleFutureReminder(record);
+    record = {
+      id: record.id,
+      date: record.date,
+      weekday: record.weekday,
+      recipient: record.recipient,
+      recipientHint: record.recipientHint,
+      emotion: record.emotion,
+      emotionHint: record.emotionHint,
+      ritual: record.ritual,
+      ritualHint: record.ritualHint,
+      content: record.content,
+      keywords: record.keywords,
+      echoLine: record.echoLine,
+      moodTag: record.moodTag,
+      anonymous: record.anonymous,
+      unlockDate: record.unlockDate,
+      unlockAt: record.unlockAt,
+      reminderId: reminderId
+    };
+
+    this.futureLetters = [record, ...this.futureLetters];
+    this.echoCards = [record, ...this.echoCards];
+    this.activeEchoId = record.id;
+    this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== originalContent);
+    this.persistLetters();
+    this.currentPage = 'echo';
+    this.statusText = reminderId > 0
+      ? '它已经寄往未来，到时间系统会提醒你打开。'
+      : '未来信已经保存好了，但当前设备暂时没有成功接管到点提醒。';
+  }
+
+  private cancelFutureReminder(reminderId: number): void {
+    if (reminderId <= 0) {
+      return;
+    }
+    reminderAgentManager.cancelReminder(reminderId).catch((_err: BusinessError) => {
+    });
+  }
+
   private applyRitual(index: number): void {
     const ritual: SelectItem = this.ritualOptions[index];
-    const record: LetterRecord = this.createRecord(ritual.title, ritual.subtitle);
+    const originalContent: string = this.letterContent.trim();
+    let record: LetterRecord = this.createRecord(ritual.title, ritual.subtitle);
 
     if (ritual.id === 'seal') {
       this.sealedLetters = [record, ...this.sealedLetters];
+      this.statusText = '这封信已经被封存在时光盒里了。';
     } else if (ritual.id === 'future') {
-      this.futureLetters = [record, ...this.futureLetters];
+      this.refreshNotificationPermissionStatus();
+      this.currentPage = 'futureSchedule';
+      this.statusText = '选一个未来日期，到那天我再提醒你打开。';
+      return;
     } else if (ritual.id === 'drift') {
+      record = {
+        id: record.id,
+        date: record.date,
+        weekday: record.weekday,
+        recipient: record.recipient,
+        recipientHint: record.recipientHint,
+        emotion: record.emotion,
+        emotionHint: record.emotionHint,
+        ritual: record.ritual,
+        ritualHint: '它会带着这段情绪慢慢漂远，只留下淡淡一小段摘句。',
+        content: this.createSoftExcerpt(record.content, 20),
+        echoLine: '它正在漂流，你不用急着把它追回来。',
+        keywords: [record.emotion, '漂流', '慢慢放下'],
+        moodTag: record.moodTag,
+        anonymous: record.anonymous,
+        unlockDate: record.unlockDate,
+        unlockAt: record.unlockAt,
+        reminderId: record.reminderId
+      };
       this.driftLetters = [record, ...this.driftLetters];
+      this.statusText = '这封信已经开始漂流了，会慢慢离远一点。';
+    } else if (ritual.id === 'spark') {
+      record = {
+        id: record.id,
+        date: record.date,
+        weekday: record.weekday,
+        recipient: record.recipient,
+        recipientHint: record.recipientHint,
+        emotion: record.emotion,
+        emotionHint: record.emotionHint,
+        ritual: record.ritual,
+        ritualHint: '完整正文已经化成光点，只留下这一束很轻的回声。',
+        content: this.createSparkExcerpt(record.content),
+        echoLine: '它已经化成光点，全文不再保留。',
+        keywords: [record.emotion, '光点', '放下'],
+        moodTag: record.moodTag,
+        anonymous: record.anonymous,
+        unlockDate: record.unlockDate,
+        unlockAt: record.unlockAt,
+        reminderId: record.reminderId
+      };
+      this.statusText = '这封信已经化成光点，只留下短短一束回声。';
     }
 
     this.echoCards = [record, ...this.echoCards];
     this.activeEchoId = record.id;
-    this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== record.content);
+    this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== originalContent);
+    this.persistLetters();
     this.currentPage = 'echo';
-    this.statusText = '这封信已经被妥善安放。';
   }
 
   private createRecord(ritual: string, ritualHint: string): LetterRecord {
@@ -516,10 +876,154 @@ struct Index {
       keywords: [emotion.title, this.moodTag, ritual],
       echoLine: this.getEchoLine(ritual),
       moodTag: this.moodTag,
-      anonymous: this.isAnonymous
+      anonymous: this.isAnonymous,
+      unlockDate: '',
+      unlockAt: 0,
+      reminderId: 0
     };
     this.nextId += 1;
     return record;
+  }
+
+  private createSoftExcerpt(content: string, maxLength: number): string {
+    const trimmed: string = content.trim();
+    if (trimmed.length <= maxLength) {
+      return trimmed;
+    }
+    return `${trimmed.slice(0, maxLength)}...`;
+  }
+
+  private createSparkExcerpt(content: string): string {
+    const trimmed: string = content.trim();
+    if (trimmed.length <= 12) {
+      return trimmed;
+    }
+    return `${trimmed.slice(0, 12)}...`;
+  }
+
+  private getMinimumFutureDate(): Date {
+    const nextDate: Date = new Date();
+    nextDate.setDate(nextDate.getDate() + 1);
+    nextDate.setHours(0, 0, 0, 0);
+    return nextDate;
+  }
+
+  private getFutureReminderMoment(selectedDate: Date): Date {
+    const reminderDate: Date = new Date(selectedDate.getTime());
+    reminderDate.setHours(this.futureReminderHour, 0, 0, 0);
+    return reminderDate;
+  }
+
+  private formatDateTime(date: Date): string {
+    const hour: string = `${date.getHours()}`.padStart(2, '0');
+    const minute: string = `${date.getMinutes()}`.padStart(2, '0');
+    return `${this.formatDate(date)} ${hour}:${minute}`;
+  }
+
+  private isFutureUnlocked(record: LetterRecord): boolean {
+    if (record.unlockAt <= 0) {
+      return true;
+    }
+    return this.unlockWatcherNow >= record.unlockAt;
+  }
+
+  private getUnlockedFutureCount(): number {
+    let count: number = 0;
+    this.futureLetters.forEach((item: LetterRecord) => {
+      if (this.isFutureUnlocked(item)) {
+        count += 1;
+      }
+    });
+    return count;
+  }
+
+  private getRecordStatusLabel(record: LetterRecord): string {
+    if (record.ritual === '寄给未来') {
+      return this.isFutureUnlocked(record) ? '已开启' : '待开启';
+    }
+    return record.ritual;
+  }
+
+  private getRecordStatusBackground(record: LetterRecord): string {
+    if (record.ritual === '寄给未来' && this.isFutureUnlocked(record)) {
+      return '#E9F3EA';
+    }
+    if (record.ritual === '寄给未来') {
+      return '#EDF1F7';
+    }
+    return '#F1E8DE';
+  }
+
+  private getFuturePermissionHint(): string {
+    if (this.futureNotificationEnabled) {
+      return '通知权限已开启，到时间会自动弹出系统提醒。';
+    }
+    return '通知权限还没打开，未来信依然会保存，但设备可能不会按时弹通知。';
+  }
+
+  private getEchoPageTitle(record: LetterRecord): string {
+    if (record.ritual === '封存') {
+      return '这封信已经被封存';
+    }
+    if (record.ritual === '燃成光点') {
+      return '这封信已经化成光点';
+    }
+    if (record.ritual === '漂流') {
+      return '这封信正在漂流';
+    }
+    if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
+      return '这封信已经寄往未来';
+    }
+    if (record.ritual === '寄给未来') {
+      return '这封来自过去的信到了';
+    }
+    return '这是一封未寄出的信';
+  }
+
+  private getEchoPageSubtitle(record: LetterRecord): string {
+    if (record.ritual === '封存') {
+      return '完整内容会被好好收着，等你想打开时再回来。';
+    }
+    if (record.ritual === '燃成光点') {
+      return '完整正文已经散去，只留下这一束短短的回声。';
+    }
+    if (record.ritual === '漂流') {
+      return '它会带着你的情绪慢慢离远，只留下淡淡的一小段。';
+    }
+    if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
+      return `它会在 ${record.unlockDate} 再次来到你面前。`;
+    }
+    if (record.ritual === '寄给未来') {
+      return '现在可以打开它，看看过去的自己留下了什么。';
+    }
+    return '它已经被妥善安放。';
+  }
+
+  private getEchoContentLabel(record: LetterRecord): string {
+    if (record.ritual === '燃成光点') {
+      return '最后留下的一束光：';
+    }
+    if (record.ritual === '漂流') {
+      return '漂流后留下的摘句：';
+    }
+    if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
+      return '未来开启时间：';
+    }
+    return '留下的一句话：';
+  }
+
+  private getDisplayedContent(record: LetterRecord): string {
+    if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
+      return record.unlockDate;
+    }
+    return `“${record.content}”`;
+  }
+
+  private getArchiveDisplayText(record: LetterRecord): string {
+    if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
+      return `将于 ${record.unlockDate} 开启\n在那之前，这封信会先替你安静地留着。`;
+    }
+    return `“${record.content}”`;
   }
 
   private getEchoLine(ritual: string): string {
@@ -557,6 +1061,7 @@ struct Index {
     this.letterContent = '';
     this.isAnonymous = false;
     this.moodTag = '私语';
+    this.futureReminderDate = this.getMinimumFutureDate();
   }
 
   private continueDraft(record: LetterRecord): void {
@@ -565,6 +1070,7 @@ struct Index {
     this.letterContent = record.content;
     this.moodTag = record.moodTag;
     this.isAnonymous = record.anonymous;
+    this.futureReminderDate = this.getMinimumFutureDate();
     this.currentPage = 'writing';
     this.statusText = '已经帮你把草稿重新铺开了。';
   }
@@ -581,8 +1087,51 @@ struct Index {
   }
 
   private enterEcho(record: LetterRecord): void {
+    this.openedMenuId = -1;
     this.activeEchoId = record.id;
     this.currentPage = 'echo';
+  }
+
+  private toggleDeleteMenu(recordId: number): void {
+    if (this.openedMenuId === recordId) {
+      this.openedMenuId = -1;
+      return;
+    }
+    this.openedMenuId = recordId;
+  }
+
+  private closeDeleteMenu(): void {
+    this.openedMenuId = -1;
+  }
+
+  private deleteRecord(targetId: number): void {
+    let reminderId: number = 0;
+    this.futureLetters.forEach((item: LetterRecord) => {
+      if (item.id === targetId) {
+        reminderId = item.reminderId;
+      }
+    });
+    this.cancelFutureReminder(reminderId);
+    this.sealedLetters = this.sealedLetters.filter((item: LetterRecord) => item.id !== targetId);
+    this.futureLetters = this.futureLetters.filter((item: LetterRecord) => item.id !== targetId);
+    this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== targetId);
+    this.echoCards = this.echoCards.filter((item: LetterRecord) => item.id !== targetId);
+
+    if (this.activeEchoId === targetId) {
+      if (this.echoCards.length > 0) {
+        this.activeEchoId = this.echoCards[0].id;
+      } else {
+        this.activeEchoId = -1;
+        if (this.currentPage === 'echo') {
+          this.currentPage = 'home';
+          this.homeTab = 1;
+        }
+      }
+    }
+
+    this.openedMenuId = -1;
+    this.persistLetters();
+    this.statusText = '这封信已经删除了。';
   }
 
   private getArchiveTitle(): string {
@@ -871,6 +1420,8 @@ struct Index {
             this.currentPage = 'recipient';
           } else if (this.currentPage === 'writing') {
             this.currentPage = 'emotion';
+          } else if (this.currentPage === 'futureSchedule') {
+            this.currentPage = 'ritual';
           } else if (this.currentPage === 'ritual') {
             this.currentPage = 'writing';
           } else {
@@ -952,84 +1503,144 @@ struct Index {
 
   @Builder
   private buildRecentCard(item: LetterRecord) {
-    Column({ space: 12 }) {
-      Row() {
-        Column({ space: 4 }) {
-          Text(item.date)
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column({ space: 12 }) {
+        Row() {
+          Column({ space: 4 }) {
+            Text(item.date)
+              .fontSize(18)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#362F29')
+            Text(`${item.emotion} · ${this.getRecordStatusLabel(item)}`)
+              .fontSize(12)
+              .fontColor('#93897E')
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+
+          Text('...')
             .fontSize(18)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#362F29')
-          Text(`${item.emotion} · ${item.ritual}`)
-            .fontSize(12)
-            .fontColor('#93897E')
+            .fontColor('#7A7065')
+            .padding({ left: 8, right: 8, top: 2, bottom: 8 })
+            .onClick(() => {
+              this.toggleDeleteMenu(item.id);
+            })
         }
-        .alignItems(HorizontalAlign.Start)
+        .width('100%')
 
-        Blank()
+        Text(this.getArchiveDisplayText(item))
+          .fontSize(15)
+          .lineHeight(26)
+          .fontColor('#4C433C')
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
 
-        Text(item.anonymous ? '匿名' : '署名')
+        Text(item.ritualHint)
           .fontSize(12)
-          .fontColor('#7A7065')
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor('#F1E7DD')
-          .borderRadius(12)
+          .fontColor('#8A8178')
+          .width('100%')
       }
       .width('100%')
+      .padding(20)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(24)
+      .onClick(() => {
+        this.enterEcho(item);
+      })
 
-      Text(`“${item.content}”`)
-        .fontSize(15)
-        .lineHeight(26)
-        .fontColor('#4C433C')
-
-      Text(item.echoLine)
-        .fontSize(12)
-        .fontColor('#8A8178')
+      if (this.openedMenuId === item.id) {
+        Column() {
+          Text('删除')
+            .fontSize(14)
+            .fontColor('#9D6666')
+        }
+        .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+        .backgroundColor('#FFFDFC')
+        .borderRadius(14)
+        .shadow({
+          radius: 12,
+          color: '#14000000',
+          offsetX: 0,
+          offsetY: 4
+        })
+        .margin({ top: 48, right: 18 })
+        .onClick(() => {
+          this.deleteRecord(item.id);
+        })
+      }
     }
     .width('100%')
-    .padding(20)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(24)
-    .onClick(() => {
-      this.enterEcho(item);
-    })
   }
 
   @Builder
   private buildEchoListCard(item: LetterRecord) {
-    Column({ space: 12 }) {
-      Row() {
-        Text(item.date)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#352D27')
-        Blank()
-        Text(item.ritual)
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column({ space: 12 }) {
+        Row() {
+          Text(item.date)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#352D27')
+          Blank()
+          Text(this.getRecordStatusLabel(item))
+            .fontSize(12)
+            .fontColor('#7A7065')
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .backgroundColor(this.getRecordStatusBackground(item))
+            .borderRadius(12)
+          Text('...')
+            .fontSize(18)
+            .fontColor('#7A7065')
+            .padding({ left: 8, right: 2, top: 2, bottom: 8 })
+            .onClick(() => {
+              this.toggleDeleteMenu(item.id);
+            })
+        }
+        .width('100%')
+
+        Text(`${item.recipient} · ${item.emotion}`)
           .fontSize(12)
-          .fontColor('#7A7065')
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor('#F1E8DE')
-          .borderRadius(12)
+          .fontColor('#8C8379')
+
+        Text(this.getArchiveDisplayText(item))
+          .fontSize(15)
+          .lineHeight(24)
+          .fontColor('#4D433C')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
+      .padding(18)
+      .backgroundColor('#FBF7F1')
+      .borderRadius(22)
+      .onClick(() => {
+        this.enterEcho(item);
+      })
 
-      Text(`${item.recipient} · ${item.emotion}`)
-        .fontSize(12)
-        .fontColor('#8C8379')
-
-      Text(`“${item.content}”`)
-        .fontSize(15)
-        .lineHeight(24)
-        .fontColor('#4D433C')
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      if (this.openedMenuId === item.id) {
+        Column() {
+          Text('删除')
+            .fontSize(14)
+            .fontColor('#9D6666')
+        }
+        .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+        .backgroundColor('#FFFDFC')
+        .borderRadius(14)
+        .shadow({
+          radius: 12,
+          color: '#14000000',
+          offsetX: 0,
+          offsetY: 4
+        })
+        .margin({ top: 42, right: 18 })
+        .onClick(() => {
+          this.deleteRecord(item.id);
+        })
+      }
     }
     .width('100%')
-    .padding(18)
-    .backgroundColor('#FBF7F1')
-    .borderRadius(22)
-    .onClick(() => {
-      this.enterEcho(item);
-    })
   }
 
   @Builder
@@ -1052,8 +1663,6 @@ struct Index {
   @Builder
   private buildEmptyState(title: string, subtitle: string) {
     Column({ space: 10 }) {
-      Text('🦔')
-        .fontSize(48)
       Text(title)
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
@@ -1201,7 +1810,7 @@ struct Index {
             Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
               this.buildMailboxCard('草稿箱', `${this.drafts.length} 封草稿`, '#F5EFE7', 'draft')
               this.buildMailboxCard('封存的信', `${this.sealedLetters.length} 封信件`, '#F4EEE7', 'sealed')
-              this.buildMailboxCard('未来信', `${this.futureLetters.length} 封待开启`, '#F2F4F8', 'future')
+              this.buildMailboxCard('未来信', `${this.getUnlockedFutureCount()} / ${this.futureLetters.length} 已开启`, '#F2F4F8', 'future')
               this.buildMailboxCard('情绪回声卡', `${this.echoCards.length} 张回声卡`, '#F5F1EA', 'echo')
             }
             .width('100%')
@@ -1395,10 +2004,107 @@ struct Index {
   }
 
   @Builder
+  private buildFutureSchedulePage() {
+    Scroll() {
+      Column({ space: 18 }) {
+        this.buildBackHeader('寄给未来', '选一个具体日期，到那天我再提醒你打开。')
+
+        Column({ space: 16 }) {
+          Text('未来开启日期')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#312923')
+            .width('100%')
+
+          DatePicker({
+            start: this.getMinimumFutureDate(),
+            end: new Date('2036-12-31'),
+            selected: this.futureReminderDate
+          })
+            .width('100%')
+            .height(210)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(24)
+            .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+            .onDateChange((value: Date) => {
+              this.futureReminderDate = value;
+            })
+
+          Column({ space: 8 }) {
+            Text('系统会在下面这个时间提醒你：')
+              .fontSize(13)
+              .fontColor('#8A8178')
+              .width('100%')
+            Text(this.formatDateTime(this.getFutureReminderMoment(this.futureReminderDate)))
+              .fontSize(20)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#352D27')
+              .width('100%')
+            Text('默认在当天 09:00 自动弹通知，到了时间这封未来信也会解锁。')
+              .fontSize(12)
+              .lineHeight(20)
+              .fontColor('#8A8178')
+              .width('100%')
+            Text(this.getFuturePermissionHint())
+              .fontSize(12)
+              .lineHeight(20)
+              .fontColor(this.futureNotificationEnabled ? '#6E8E76' : '#A07E6B')
+              .width('100%')
+          }
+          .width('100%')
+          .padding(18)
+          .backgroundColor('#FBF7F1')
+          .borderRadius(24)
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20 })
+
+        if (!this.futureNotificationEnabled) {
+          Column() {
+            this.buildSecondaryAction('打开通知设置')
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20 })
+          .onClick(() => {
+            this.openFutureReminderSettings();
+          })
+        }
+
+        Row({ space: 12 }) {
+          Column() {
+            this.buildSecondaryAction('返回上一页')
+          }
+          .width('48%')
+          .onClick(() => {
+            this.currentPage = 'ritual';
+          })
+
+          Column() {
+            this.buildPrimaryAction('寄给未来', '#97AEC3')
+          }
+          .width('48%')
+          .onClick(() => {
+            this.confirmFutureDelivery();
+          })
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20, bottom: 30 })
+      }
+      .width('100%')
+      .onAppear(() => {
+        this.refreshNotificationPermissionStatus();
+      })
+    }
+  }
+
+  @Builder
   private buildEchoPage() {
     Scroll() {
       Column({ space: 14 }) {
-        this.buildBackHeader('这是一封未寄出的信', '它已经被妥善安放。')
+        this.buildBackHeader(
+          this.getEchoPageTitle(this.getActiveEcho()),
+          this.getEchoPageSubtitle(this.getActiveEcho())
+        )
 
         Column({ space: 10 }) {
           Text(this.getActiveEcho().date)
@@ -1432,12 +2138,18 @@ struct Index {
             .fontColor('#7D746A')
             .width('100%')
 
-          Text('留下的一句话：')
+          Text(this.getActiveEcho().ritualHint)
+            .fontSize(13)
+            .lineHeight(20)
+            .fontColor('#7D746A')
+            .width('100%')
+
+          Text(this.getEchoContentLabel(this.getActiveEcho()))
             .fontSize(13)
             .fontColor('#7D746A')
             .width('100%')
 
-          Text(`“${this.getActiveEcho().content}”`)
+          Text(this.getDisplayedContent(this.getActiveEcho()))
             .fontSize(17)
             .lineHeight(28)
             .fontColor('#342C26')
@@ -1500,9 +2212,43 @@ struct Index {
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#352D27')
                 Blank()
-                Text(item.ritual)
-                  .fontSize(12)
-                  .fontColor('#7A7065')
+                Stack({ alignContent: Alignment.TopEnd }) {
+                  Text(this.getRecordStatusLabel(item))
+                    .fontSize(12)
+                    .fontColor('#7A7065')
+                    .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                    .backgroundColor(this.getRecordStatusBackground(item))
+                    .borderRadius(12)
+                  if (this.archiveKind !== 'draft') {
+                    Text('...')
+                      .fontSize(18)
+                      .fontColor('#7A7065')
+                      .padding({ left: 6, right: 2, top: 2, bottom: 8 })
+                      .onClick(() => {
+                        this.toggleDeleteMenu(item.id);
+                      })
+                  }
+                  if (this.archiveKind !== 'draft' && this.openedMenuId === item.id) {
+                    Column() {
+                      Text('删除')
+                        .fontSize(14)
+                        .fontColor('#9D6666')
+                    }
+                    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+                    .backgroundColor('#FFFDFC')
+                    .borderRadius(14)
+                    .shadow({
+                      radius: 12,
+                      color: '#14000000',
+                      offsetX: 0,
+                      offsetY: 4
+                    })
+                    .margin({ top: 30, right: 2 })
+                    .onClick(() => {
+                      this.deleteRecord(item.id);
+                    })
+                  }
+                }
               }
               .width('100%')
 
@@ -1511,7 +2257,7 @@ struct Index {
                 .fontColor('#8E847A')
                 .width('100%')
 
-              Text(`“${item.content}”`)
+              Text(this.getArchiveDisplayText(item))
                 .fontSize(15)
                 .lineHeight(24)
                 .fontColor('#4D433C')
@@ -1631,6 +2377,8 @@ struct Index {
           this.buildWritingPage()
         } else if (this.currentPage === 'ritual') {
           this.buildRitualPage()
+        } else if (this.currentPage === 'futureSchedule') {
+          this.buildFutureSchedulePage()
         } else if (this.currentPage === 'archive') {
           this.buildArchivePage()
         } else {
@@ -1644,6 +2392,7 @@ struct Index {
       if (this.currentPage === 'home') {
         this.buildBottomBar()
       }
+
     }
     .width('100%')
     .height('100%')
