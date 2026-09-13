@@ -29,18 +29,18 @@ struct Index {
   private readonly recipientOptions: Array<SelectItem> = [
     { id: 'self', title: '写给自己', subtitle: '给此刻的自己一点温柔', emoji: '🪞', color: '#F4EEE5' },
     { id: 'someone', title: '写给某个人', subtitle: '给那个TA，说说心里话', emoji: '💌', color: '#F7F1E6' },
-    { id: 'past', title: '写给过去的自己', subtitle: '给曾经的自己一个拥抱', emoji: '🖼', color: '#F3ECE6' },
     { id: 'future', title: '写给未来的自己', subtitle: '给未来的自己一句话', emoji: '📅', color: '#F5EFE7' },
-    { id: 'unknown', title: '写给不会收到的人', subtitle: '有些话，只想说给风听', emoji: '🦔', color: '#EEF3F7' }
+    { id: 'unknown', title: '写给不会收到的人', subtitle: '有些话，只想说给风听', emoji: '🦔', color: '#EEF3F7' },
+    { id: 'custom', title: '写给自定义对象', subtitle: '想写给谁，都可以由你自己定义', emoji: '✍️', color: '#F3ECE6' }
   ];
 
   private readonly emotionOptions: Array<SelectItem> = [
-    { id: 'miss', title: '想念', subtitle: '想念某个人', emoji: '☁️', color: '#DDE6F2' },
-    { id: 'regret', title: '遗憾', subtitle: '有些错过', emoji: '🌙', color: '#E6E1F0' },
-    { id: 'angry', title: '生气', subtitle: '一时的情绪', emoji: '🌤', color: '#F7DAD4' },
-    { id: 'thanks', title: '感谢', subtitle: '想说声谢谢', emoji: '✨', color: '#F7E7C9' },
-    { id: 'farewell', title: '告别', subtitle: '说再见', emoji: '🍃', color: '#E8E8EA' },
-    { id: 'relief', title: '释怀', subtitle: '慢慢放下', emoji: '🌿', color: '#E5EEE5' }
+    { id: 'sad', title: '伤心', subtitle: '眼眶有点酸酸的', emoji: '☁️', color: '#DDE6F2' },
+    { id: 'regret', title: '遗憾', subtitle: '有些错过，还是记得', emoji: '🌙', color: '#E6E1F0' },
+    { id: 'angry', title: '生气', subtitle: '一时的情绪，需要出口', emoji: '🌤', color: '#F7DAD4' },
+    { id: 'happy', title: '开心', subtitle: '想把快乐偷偷记下来', emoji: '✨', color: '#F7E7C9' },
+    { id: 'confused', title: '迷茫', subtitle: '有点乱，也有点不确定', emoji: '🍃', color: '#E8E8EA' },
+    { id: 'other', title: '其他', subtitle: '说不清，也可以慢慢写', emoji: '🌿', color: '#E5EEE5' }
   ];
 
   private readonly ritualOptions: Array<SelectItem> = [
@@ -79,8 +79,8 @@ struct Index {
       weekday: '星期六',
       recipient: '写给自己',
       recipientHint: '给此刻的自己一点温柔',
-      emotion: '感谢',
-      emotionHint: '想说声谢谢',
+      emotion: '开心',
+      emotionHint: '想把快乐偷偷记下来',
       ritual: '草稿',
       ritualHint: '暂时留在这里，等你准备好再继续',
       content: '谢谢那个没有放弃自己的我，今天也比昨天更勇敢了一点。',
@@ -95,8 +95,8 @@ struct Index {
       weekday: '星期日',
       recipient: '写给不会收到的人',
       recipientHint: '有些话，只想轻轻地说',
-      emotion: '想念',
-      emotionHint: '想念某个人',
+      emotion: '遗憾',
+      emotionHint: '有些错过，还是记得',
       ritual: '封存',
       ritualHint: '把信放进时光盒，让它暂时被照顾',
       content: '我没有打扰你，但我认真想过你。',
@@ -158,16 +158,7 @@ struct Index {
   private chooseEmotion(index: number): void {
     this.selectedEmotionIndex = index;
     this.currentPage = 'writing';
-    if (this.letterContent.length === 0) {
-      this.letterContent = this.getDefaultContent();
-    }
     this.statusText = '慢慢写，暂时不用急着发送。';
-  }
-
-  private getDefaultContent(): string {
-    const recipient: SelectItem = this.getSelectedRecipient();
-    const emotion: SelectItem = this.getSelectedEmotion();
-    return `今天我想把这些话写给${recipient.title.replace('写给', '')}。\n\n它和“${emotion.title}”有关，也和此刻的我有关。\n\n`;
   }
 
   private saveDraft(): void {
@@ -347,16 +338,26 @@ struct Index {
         .width(92)
         .height(76)
         .objectFit(ImageFit.Contain)
-    } else if (id === 'past') {
-      Image($r('app.media.recipient_past'))
-        .width(92)
-        .height(76)
-        .objectFit(ImageFit.Contain)
     } else if (id === 'future') {
       Image($r('app.media.recipient_future'))
         .width(98)
         .height(78)
         .objectFit(ImageFit.Contain)
+    } else if (id === 'custom') {
+      Column({ space: 6 }) {
+        Text('✎')
+          .fontSize(22)
+          .fontColor('#9D9387')
+        Text('自定义')
+          .fontSize(11)
+          .fontColor('#9D9387')
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .width(86)
+      .height(70)
+      .backgroundColor('#F7F1EA')
+      .borderRadius(18)
     } else {
       Image($r('app.media.recipient_unknown'))
         .width(84)
@@ -399,6 +400,142 @@ struct Index {
   }
 
   @Builder
+  private buildRitualIllustration(id: string) {
+    if (id === 'seal') {
+      Image($r('app.media.ritual_seal'))
+        .width(96)
+        .height(86)
+        .objectFit(ImageFit.Contain)
+    } else if (id === 'spark') {
+      Image($r('app.media.ritual_spark'))
+        .width(96)
+        .height(86)
+        .objectFit(ImageFit.Contain)
+    } else if (id === 'drift') {
+      Image($r('app.media.ritual_drift'))
+        .width(96)
+        .height(86)
+        .objectFit(ImageFit.Contain)
+    } else {
+      Image($r('app.media.ritual_future'))
+        .width(96)
+        .height(86)
+        .objectFit(ImageFit.Contain)
+    }
+  }
+
+  @Builder
+  private buildRitualCard(item: SelectItem, index: number) {
+    Row() {
+      Column({ space: 8 }) {
+        Text(item.title)
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#2F2721')
+        Text(item.subtitle)
+          .fontSize(12)
+          .lineHeight(20)
+          .fontColor('#998F84')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('64%')
+
+      Blank()
+
+      this.buildRitualIllustration(item.id)
+    }
+    .width('100%')
+    .padding({ left: 18, right: 14, top: 16, bottom: 16 })
+    .backgroundColor('#FBF8F4')
+    .borderRadius(24)
+    .shadow({
+      radius: 18,
+      color: '#14000000',
+      offsetX: 0,
+      offsetY: 6
+    })
+    .onClick(() => {
+      this.applyRitual(index);
+    })
+  }
+
+  @Builder
+  private buildEmotionIllustration(id: string) {
+    if (id === 'sad') {
+      Image($r('app.media.emotion_sad'))
+        .width(88)
+        .height(72)
+        .objectFit(ImageFit.Contain)
+    } else if (id === 'regret') {
+      Image($r('app.media.emotion_regret'))
+        .width(88)
+        .height(72)
+        .objectFit(ImageFit.Contain)
+    } else if (id === 'angry') {
+      Image($r('app.media.emotion_angry'))
+        .width(88)
+        .height(72)
+        .objectFit(ImageFit.Contain)
+    } else if (id === 'happy') {
+      Image($r('app.media.emotion_happy'))
+        .width(88)
+        .height(72)
+        .objectFit(ImageFit.Contain)
+    } else if (id === 'confused') {
+      Image($r('app.media.emotion_confused'))
+        .width(88)
+        .height(72)
+        .objectFit(ImageFit.Contain)
+    } else {
+      Column({ space: 6 }) {
+        Text('...')
+          .fontSize(24)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#A0978B')
+        Text('慢慢说')
+          .fontSize(11)
+          .fontColor('#A0978B')
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .width(84)
+      .height(68)
+      .backgroundColor('#F7F2EB')
+      .borderRadius(18)
+    }
+  }
+
+  @Builder
+  private buildEmotionCard(item: SelectItem, index: number) {
+    Column({ space: 10 }) {
+      Text(item.title)
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#312923')
+      Text(item.subtitle)
+        .fontSize(12)
+        .lineHeight(18)
+        .fontColor('#857A70')
+      Blank()
+      Row() {
+        Blank()
+        this.buildEmotionIllustration(item.id)
+      }
+      .width('100%')
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('48%')
+    .height(172)
+    .padding(18)
+    .margin({ bottom: 12 })
+    .backgroundColor(item.color)
+    .borderRadius(24)
+    .onClick(() => {
+      this.chooseEmotion(index);
+    })
+  }
+
+  @Builder
   private buildBackHeader(title: string, subtitle: string) {
     Row() {
       Text('‹')
@@ -431,16 +568,9 @@ struct Index {
       .margin({ left: 8 })
 
       Blank()
-
-      Text('未语')
-        .fontSize(12)
-        .fontColor('#9B9185')
-        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-        .backgroundColor('#F0E7DD')
-        .borderRadius(12)
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 18, bottom: 8 })
+    .padding({ left: 20, right: 20, top: 18, bottom: 4 })
   }
 
   @Builder
@@ -758,20 +888,6 @@ struct Index {
             }
             .width('100%')
 
-            Column({ space: 10 }) {
-              Text('产品定位')
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#3D342E')
-              Text('“未语” 是一个把未发送情绪安放起来的私密空间。你可以选择写给谁、带着怎样的情绪去写，再用数字仪式把它轻轻安放。')
-                .fontSize(13)
-                .lineHeight(22)
-                .fontColor('#746B61')
-            }
-            .width('100%')
-            .padding(18)
-            .backgroundColor('#FBF7F1')
-            .borderRadius(24)
           }
           .width('100%')
           .padding({ left: 20, right: 20, bottom: 110 })
@@ -829,28 +945,7 @@ struct Index {
         this.buildBackHeader('这张信纸，陪你写下什么？', '先给心情命名，再慢慢说。')
         Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
           ForEach(this.emotionOptions, (item: SelectItem, index: number) => {
-            Column({ space: 10 }) {
-              Text(item.title)
-                .fontSize(18)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#312923')
-              Text(item.subtitle)
-                .fontSize(12)
-                .fontColor('#857A70')
-              Blank()
-              Text(item.emoji)
-                .fontSize(30)
-            }
-            .alignItems(HorizontalAlign.Start)
-            .width('48%')
-            .height(168)
-            .padding(18)
-            .margin({ bottom: 12 })
-            .backgroundColor(item.color)
-            .borderRadius(24)
-            .onClick(() => {
-              this.chooseEmotion(index);
-            })
+            this.buildEmotionCard(item, index)
           }, (item: SelectItem) => item.id)
         }
         .width('100%')
@@ -862,96 +957,33 @@ struct Index {
 
   @Builder
   private buildWritingPage() {
-    Column() {
+    Column({ space: 8 }) {
       this.buildBackHeader(
         `写给${this.getSelectedRecipient().title.replace('写给', '')}`,
         `${this.getSelectedEmotion().title}会替你先垫住情绪。`
       )
 
-      Column({ space: 14 }) {
-        Row() {
-          Text(`对象：${this.getSelectedRecipient().title}`)
-            .fontSize(13)
-            .fontColor('#7B7269')
-          Blank()
-          Text(`情绪：${this.getSelectedEmotion().title}`)
-            .fontSize(13)
-            .fontColor('#7B7269')
-        }
-        .width('100%')
-
-        TextArea({ text: this.letterContent, placeholder: '今天想说什么，就从第一句开始。' })
-          .width('100%')
-          .height('56%')
-          .fontSize(18)
-          .fontColor('#2F2721')
-          .backgroundColor('#FBF8F3')
-          .borderRadius(28)
-          .padding(20)
-          .onChange((value: string) => {
-            this.letterContent = value;
-          })
-
-        Row({ space: 10 }) {
-          Text('🫧')
+      Column({ space: 12 }) {
+        Stack({ alignContent: Alignment.BottomEnd }) {
+          TextArea({ text: this.letterContent, placeholder: '今天想说什么，就从第一句开始。' })
+            .width('100%')
+            .height('100%')
             .fontSize(18)
-          Text(this.isAnonymous ? '匿名中' : '署名中')
-            .fontSize(13)
-            .fontColor('#6F655B')
-          Blank()
-          Text(this.moodTag)
-            .fontSize(13)
-            .fontColor('#6F655B')
-          Text('·')
-            .fontSize(13)
-            .fontColor('#A19589')
+            .fontColor('#2F2721')
+            .backgroundColor('#FBF8F3')
+            .borderRadius(28)
+            .padding(20)
+            .onChange((value: string) => {
+              this.letterContent = value;
+            })
+
           Text(`${this.letterContent.length} 字`)
             .fontSize(13)
-            .fontColor('#6F655B')
+            .fontColor('#8C8379')
+            .margin({ right: 22, bottom: 18 })
         }
         .width('100%')
-        .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-        .backgroundColor('#F3EEE7')
-        .borderRadius(18)
-
-        Row({ space: 10 }) {
-          Row() {
-            Blank()
-            Text(this.isAnonymous ? '改为署名' : '设为匿名')
-              .fontSize(14)
-              .fontColor('#695F56')
-            Blank()
-          }
-          .width('48%')
-          .padding({ top: 14, bottom: 14 })
-          .backgroundColor('#F3EEE7')
-          .borderRadius(18)
-          .onClick(() => {
-            this.isAnonymous = !this.isAnonymous;
-          })
-
-          Row() {
-            Blank()
-            Text('切换心情')
-              .fontSize(14)
-              .fontColor('#695F56')
-            Blank()
-          }
-          .width('48%')
-          .padding({ top: 14, bottom: 14 })
-          .backgroundColor('#F3EEE7')
-          .borderRadius(18)
-          .onClick(() => {
-            if (this.moodTag === '私语') {
-              this.moodTag = '心语';
-            } else if (this.moodTag === '心语') {
-              this.moodTag = '晚风';
-            } else {
-              this.moodTag = '私语';
-            }
-          })
-        }
-        .width('100%')
+        .layoutWeight(1)
 
         Row({ space: 12 }) {
           Column() {
@@ -973,8 +1005,8 @@ struct Index {
         .width('100%')
       }
       .width('100%')
-      .height('100%')
-      .padding({ left: 20, right: 20, bottom: 24 })
+      .layoutWeight(1)
+      .padding({ left: 20, right: 20, bottom: 16 })
     }
     .width('100%')
     .height('100%')
@@ -983,39 +1015,17 @@ struct Index {
   @Builder
   private buildRitualPage() {
     Scroll() {
-      Column({ space: 12 }) {
+      Column({ space: 18 }) {
         this.buildBackHeader('这封信，你想如何安放？', '选择一种方式，把这封信安顿好。')
-        ForEach(this.ritualOptions, (item: SelectItem, index: number) => {
-          Row() {
-            Column({ space: 6 }) {
-              Text(item.title)
-                .fontSize(18)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#312923')
-              Text(item.subtitle)
-                .fontSize(12)
-                .lineHeight(20)
-                .fontColor('#867C72')
-            }
-            .alignItems(HorizontalAlign.Start)
-            .width('76%')
-
-            Blank()
-
-            Text(item.emoji)
-              .fontSize(34)
-          }
-          .width('100%')
-          .padding(18)
-          .backgroundColor(item.color)
-          .borderRadius(24)
-          .onClick(() => {
-            this.applyRitual(index);
-          })
-        }, (item: SelectItem) => item.id)
+        Column({ space: 14 }) {
+          ForEach(this.ritualOptions, (item: SelectItem, index: number) => {
+            this.buildRitualCard(item, index)
+          }, (item: SelectItem) => item.id)
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20, bottom: 30 })
       }
       .width('100%')
-      .padding({ bottom: 30 })
     }
   }
 
