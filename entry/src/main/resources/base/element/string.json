@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "未语主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "一个用于安放未寄出情绪的私密信箱"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "未语"
+    }
+  ]
+}
