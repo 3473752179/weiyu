@@ -67,6 +67,14 @@ struct Index {
   @State private driftLetters: Array<LetterRecord> = [];
   @State private echoCards: Array<LetterRecord> = [];
   @State private activeEchoId: number = 2;
+  @State private homeEntryOffset: number = 18;
+  @State private homeEntryOpacity: number = 0;
+  @State private recipientEntryOffset: number = 18;
+  @State private recipientEntryOpacity: number = 0;
+  @State private emotionEntryOffset: number = 18;
+  @State private emotionEntryOpacity: number = 0;
+  @State private ritualEntryOffset: number = 18;
+  @State private ritualEntryOpacity: number = 0;
 
   aboutToAppear(): void {
     if (this.initialized) {
@@ -136,6 +144,62 @@ struct Index {
       index += 1;
     }
     return this.echoCards[0];
+  }
+
+  private playHomeEntryAnimation(): void {
+    this.homeEntryOpacity = 0;
+    this.homeEntryOffset = 18;
+    setTimeout(() => {
+      animateTo({
+        duration: 480,
+        curve: Curve.EaseOut
+      }, () => {
+        this.homeEntryOpacity = 1;
+        this.homeEntryOffset = 0;
+      });
+    }, 60);
+  }
+
+  private playRecipientEntryAnimation(): void {
+    this.recipientEntryOpacity = 0;
+    this.recipientEntryOffset = 18;
+    setTimeout(() => {
+      animateTo({
+        duration: 480,
+        curve: Curve.EaseOut
+      }, () => {
+        this.recipientEntryOpacity = 1;
+        this.recipientEntryOffset = 0;
+      });
+    }, 60);
+  }
+
+  private playEmotionEntryAnimation(): void {
+    this.emotionEntryOpacity = 0;
+    this.emotionEntryOffset = 18;
+    setTimeout(() => {
+      animateTo({
+        duration: 480,
+        curve: Curve.EaseOut
+      }, () => {
+        this.emotionEntryOpacity = 1;
+        this.emotionEntryOffset = 0;
+      });
+    }, 60);
+  }
+
+  private playRitualEntryAnimation(): void {
+    this.ritualEntryOpacity = 0;
+    this.ritualEntryOffset = 18;
+    setTimeout(() => {
+      animateTo({
+        duration: 480,
+        curve: Curve.EaseOut
+      }, () => {
+        this.ritualEntryOpacity = 1;
+        this.ritualEntryOffset = 0;
+      });
+    }, 60);
   }
 
   private openComposer(): void {
@@ -824,9 +888,14 @@ struct Index {
             .padding(20)
             .backgroundColor('#FBF7F1')
             .borderRadius(28)
+            .opacity(this.homeEntryOpacity)
+            .translate({ x: 0, y: this.homeEntryOffset })
             .onClick(() => {
               this.resetComposer();
               this.openComposer();
+            })
+            .onAppear(() => {
+              this.playHomeEntryAnimation();
             })
 
             Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
@@ -933,6 +1002,11 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 40 })
+        .opacity(this.recipientEntryOpacity)
+        .translate({ x: 0, y: this.recipientEntryOffset })
+        .onAppear(() => {
+          this.playRecipientEntryAnimation();
+        })
       }
       .width('100%')
     }
@@ -950,6 +1024,11 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 28 })
+        .opacity(this.emotionEntryOpacity)
+        .translate({ x: 0, y: this.emotionEntryOffset })
+        .onAppear(() => {
+          this.playEmotionEntryAnimation();
+        })
       }
       .width('100%')
     }
@@ -1024,6 +1103,11 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 30 })
+        .opacity(this.ritualEntryOpacity)
+        .translate({ x: 0, y: this.ritualEntryOffset })
+        .onAppear(() => {
+          this.playRitualEntryAnimation();
+        })
       }
       .width('100%')
     }
