@@ -3,6 +3,7 @@ import { preferences } from '@kit.ArkData';
 import { reminderAgentManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { picker } from '@kit.CoreFileKit';
 
 interface SelectItem {
   id: string;
@@ -30,6 +31,7 @@ interface LetterRecord {
   unlockDate: string;
   unlockAt: number;
   reminderId: number;
+  photoUris: Array<string>;
 }
 
 interface StoredLetterState {
@@ -80,6 +82,7 @@ struct Index {
   @State private selectedEmotionIndex: number = -1;
   @State private emotionConfirmLabel: string = '是什么呢';
   @State private letterContent: string = '';
+  @State private photoUris: Array<string> = [];
   @State private moodTag: string = '私语';
   @State private isAnonymous: boolean = false;
   @State private statusText: string = '把想说的话，先留在这里。';
@@ -94,6 +97,8 @@ struct Index {
   @State private openedMenuId: number = -1;
   @State private homeEntryOffset: number = 18;
   @State private homeEntryOpacity: number = 0;
+  @State private recentEntryOffset: number = 18;
+  @State private recentEntryOpacity: number = 0;
   @State private recipientEntryOffset: number = 18;
   @State private recipientEntryOpacity: number = 0;
   @State private emotionEntryOffset: number = 18;
@@ -144,7 +149,8 @@ struct Index {
       anonymous: false,
       unlockDate: '',
       unlockAt: 0,
-      reminderId: 0
+      reminderId: 0,
+      photoUris: []
     };
     const echo: LetterRecord = {
       id: 2,
@@ -163,7 +169,8 @@ struct Index {
       anonymous: true,
       unlockDate: '',
       unlockAt: 0,
-      reminderId: 0
+      reminderId: 0,
+      photoUris: []
     };
 
     this.drafts = [draft];
@@ -209,7 +216,8 @@ struct Index {
       anonymous: record.anonymous,
       unlockDate: record.unlockDate ?? '',
       unlockAt: record.unlockAt ?? 0,
-      reminderId: record.reminderId ?? 0
+      reminderId: record.reminderId ?? 0,
+      photoUris: record.photoUris ?? []
     };
   }
 
@@ -309,6 +317,23 @@ struct Index {
     return this.echoCards[0];
   }
 
+  private getEmotionCover(emotion: string): Resource {
+    switch (emotion) {
+      case '开心':
+        return $r('app.media.emotion_cover_happy');
+      case '迷茫':
+        return $r('app.media.emotion_cover_confused');
+      case '伤心':
+        return $r('app.media.emotion_cover_sad');
+      case '生气':
+        return $r('app.media.emotion_cover_angry');
+      case '遗憾':
+        return $r('app.media.emotion_cover_regret');
+      default:
+        return $r('app.media.emotion_cover_normal');
+    }
+  }
+
   private stopAllEmotionAnimations(): void {
     this.stopConfusedEmotionAnimation();
     this.stopRegretEmotionAnimation();
@@ -379,6 +404,20 @@ struct Index {
         this.homeEntryOffset = 0;
       });
     }, 60);
+  }
+
+  private playRecentEntryAnimation(): void {
+    this.recentEntryOpacity = 0;
+    this.recentEntryOffset = 18;
+    setTimeout(() => {
+      animateTo({
+        duration: 480,
+        curve: Curve.EaseOut
+      }, () => {
+        this.recentEntryOpacity = 1;
+        this.recentEntryOffset = 0;
+      });
+    }, 150);
   }
 
   private playRecipientEntryAnimation(): void {
@@ -646,6 +685,27 @@ struct Index {
     this.statusText = '慢慢写，暂时不用急着发送。';
   }
 
+  private async choosePhotos(): Promise<void> {
+    try {
+      const photoPicker: picker.PhotoViewPicker = new picker.PhotoViewPicker();
+      const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
+      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 9;
+      const result: picker.PhotoSelectResult = await photoPicker.select(options);
+      const selectedUris: Array<string> = result.photoUris as Array<string>;
+      if (selectedUris.length > 0) {
+        this.photoUris = this.photoUris.concat(selectedUris).slice(0, 9);
+        this.statusText = `已添加 ${this.photoUris.length} 张照片。`;
+      }
+    } catch (_err) {
+      this.statusText = '照片没有添加成功，可以稍后再试。';
+    }
+  }
+
+  private removePhoto(index: number): void {
+    this.photoUris = this.photoUris.filter((_uri: string, itemIndex: number) => itemIndex !== index);
+  }
+
   private saveDraft(): void {
     const content: string = this.letterContent.trim();
     if (content.length === 0) {
@@ -750,7 +810,8 @@ struct Index {
       anonymous: record.anonymous,
       unlockDate: openDate,
       unlockAt: unlockDate.getTime(),
-      reminderId: 0
+      reminderId: 0,
+      photoUris: [...this.photoUris]
     };
 
     const reminderId: number = await this.scheduleFutureReminder(record);
@@ -771,7 +832,8 @@ struct Index {
       anonymous: record.anonymous,
       unlockDate: record.unlockDate,
       unlockAt: record.unlockAt,
-      reminderId: reminderId
+      reminderId: reminderId,
+      photoUris: [...record.photoUris]
     };
 
     this.futureLetters = [record, ...this.futureLetters];
@@ -824,7 +886,8 @@ struct Index {
         anonymous: record.anonymous,
         unlockDate: record.unlockDate,
         unlockAt: record.unlockAt,
-        reminderId: record.reminderId
+        reminderId: record.reminderId,
+        photoUris: [...record.photoUris]
       };
       this.driftLetters = [record, ...this.driftLetters];
       this.statusText = '这封信已经开始漂流了，会慢慢离远一点。';
@@ -846,7 +909,8 @@ struct Index {
         anonymous: record.anonymous,
         unlockDate: record.unlockDate,
         unlockAt: record.unlockAt,
-        reminderId: record.reminderId
+        reminderId: record.reminderId,
+        photoUris: ritual.id === 'spark' ? [] : [...record.photoUris]
       };
       this.statusText = '这封信已经化成光点，只留下短短一束回声。';
     }
@@ -879,7 +943,8 @@ struct Index {
       anonymous: this.isAnonymous,
       unlockDate: '',
       unlockAt: 0,
-      reminderId: 0
+      reminderId: 0,
+      photoUris: [...this.photoUris]
     };
     this.nextId += 1;
     return record;
@@ -1059,6 +1124,7 @@ struct Index {
     this.selectedEmotionIndex = -1;
     this.emotionConfirmLabel = '是什么呢';
     this.letterContent = '';
+    this.photoUris = [];
     this.isAnonymous = false;
     this.moodTag = '私语';
     this.futureReminderDate = this.getMinimumFutureDate();
@@ -1068,6 +1134,7 @@ struct Index {
     this.selectedRecipientIndex = this.findIndexByTitle(this.recipientOptions, record.recipient);
     this.selectedEmotionIndex = this.findIndexByTitle(this.emotionOptions, record.emotion);
     this.letterContent = record.content;
+    this.photoUris = [...(record.photoUris ?? [])];
     this.moodTag = record.moodTag;
     this.isAnonymous = record.anonymous;
     this.futureReminderDate = this.getMinimumFutureDate();
@@ -1504,14 +1571,33 @@ struct Index {
   @Builder
   private buildRecentCard(item: LetterRecord) {
     Stack({ alignContent: Alignment.TopEnd }) {
-      Column({ space: 12 }) {
+      Column() {
+        if ((item.photoUris ?? []).length > 0) {
+          Image(item.photoUris[0])
+            .width('100%')
+            .height(196)
+            .borderRadius({ topLeft: 24, topRight: 24 })
+            .objectFit(ImageFit.Cover)
+        } else {
+          Stack({ alignContent: Alignment.Center }) {
+            Image(this.getEmotionCover(item.emotion))
+              .width(150)
+              .height(140)
+              .objectFit(ImageFit.Contain)
+          }
+            .width('100%')
+            .height(196)
+            .borderRadius({ topLeft: 24, topRight: 24 })
+            .backgroundColor('#F8F5F0')
+        }
+
         Row() {
           Column({ space: 4 }) {
             Text(item.date)
-              .fontSize(18)
+              .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor('#362F29')
-            Text(`${item.emotion} · ${this.getRecordStatusLabel(item)}`)
+            Text(`${item.emotion} · ${item.ritual}`)
               .fontSize(12)
               .fontColor('#93897E')
           }
@@ -1528,22 +1614,9 @@ struct Index {
             })
         }
         .width('100%')
-
-        Text(this.getArchiveDisplayText(item))
-          .fontSize(15)
-          .lineHeight(26)
-          .fontColor('#4C433C')
-          .maxLines(3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-
-        Text(item.ritualHint)
-          .fontSize(12)
-          .fontColor('#8A8178')
-          .width('100%')
+        .padding({ left: 18, right: 18, top: 14, bottom: 14 })
       }
       .width('100%')
-      .padding(20)
       .backgroundColor('#FFFFFF')
       .borderRadius(24)
       .onClick(() => {
@@ -1571,7 +1644,7 @@ struct Index {
         })
       }
     }
-    .width('100%')
+    .width(280)
   }
 
   @Builder
@@ -1773,11 +1846,24 @@ struct Index {
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#403731')
                   .width('100%')
-                ForEach(this.getRecentLetters(3), (item: LetterRecord) => {
-                  this.buildRecentCard(item)
-                }, (item: LetterRecord) => `recent-${item.id}`)
+                Scroll() {
+                  Row({ space: 14 }) {
+                    ForEach(this.getRecentLetters(6), (item: LetterRecord) => {
+                      this.buildRecentCard(item)
+                    }, (item: LetterRecord) => `recent-${item.id}`)
+                  }
+                  .width('max-content')
+                }
+                .scrollable(ScrollDirection.Horizontal)
+                .scrollBar(BarState.Off)
+                .width('100%')
               }
               .width('100%')
+              .opacity(this.recentEntryOpacity)
+              .translate({ x: 0, y: this.recentEntryOffset })
+              .onAppear(() => {
+                this.playRecentEntryAnimation();
+              })
             }
           }
           .padding({ left: 20, right: 20, bottom: 110 })
@@ -1953,6 +2039,48 @@ struct Index {
         }
         .width('100%')
         .layoutWeight(1)
+
+        Row({ space: 10 }) {
+          ForEach(this.photoUris, (uri: string, index: number) => {
+            Stack({ alignContent: Alignment.TopEnd }) {
+              Image(uri)
+                .width(72)
+                .height(72)
+                .borderRadius(14)
+                .objectFit(ImageFit.Cover)
+              Text('×')
+                .fontSize(16)
+                .fontColor('#FFFFFF')
+                .width(22)
+                .height(22)
+                .textAlign(TextAlign.Center)
+                .backgroundColor('#80534B43')
+                .borderRadius(11)
+                .onClick(() => {
+                  this.removePhoto(index);
+                })
+            }
+          }, (uri: string, index: number) => `${uri}-${index}`)
+
+          Column({ space: 4 }) {
+            Text('＋')
+              .fontSize(26)
+              .fontColor('#7A7067')
+            Text('照片')
+              .fontSize(12)
+              .fontColor('#7A7067')
+          }
+          .width(72)
+          .height(72)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#F1ECE5')
+          .borderRadius(14)
+          .onClick(() => {
+            this.choosePhotos();
+          })
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4 })
 
         Row({ space: 12 }) {
           Column() {
