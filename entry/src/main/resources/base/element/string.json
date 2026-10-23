@@ -11,6 +11,14 @@
     {
       "name": "EntryAbility_label",
       "value": "未语"
+    },
+    {
+      "name": "letter_card_name",
+      "value": "未语信笺"
+    },
+    {
+      "name": "letter_card_desc",
+      "value": "看看最近写下的信，或从桌面开始写一封新信"
     }
   ]
 }

@@ -4,6 +4,7 @@ import { reminderAgentManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
+import { formBindingData, formProvider } from '@kit.FormKit';
 
 interface SelectItem {
   id: string;
@@ -15,6 +16,7 @@ interface SelectItem {
 
 interface LetterRecord {
   id: number;
+  title: string;
   date: string;
   weekday: string;
   recipient: string;
@@ -32,6 +34,7 @@ interface LetterRecord {
   unlockAt: number;
   reminderId: number;
   photoUris: Array<string>;
+  driftStartedAt: number;
 }
 
 interface StoredLetterState {
@@ -42,6 +45,14 @@ interface StoredLetterState {
   echoCards: Array<LetterRecord>;
   nextId: number;
   activeEchoId: number;
+}
+
+interface ServiceCardData {
+  hasLetter: boolean;
+  date: string;
+  emotionAndRitual: string;
+  content: string;
+  target: string;
 }
 
 @Entry
@@ -76,11 +87,13 @@ struct Index {
   private readonly appBundleName: string = 'com.example.weiyu';
 
   @State private currentPage: string = 'home';
+  @StorageLink('cardTarget') @Watch('onCardTargetChanged') private cardTarget: string = '';
   @State private homeTab: number = 0;
   @State private archiveKind: string = 'draft';
   @State private selectedRecipientIndex: number = -1;
   @State private selectedEmotionIndex: number = -1;
   @State private emotionConfirmLabel: string = '是什么呢';
+  @State private letterTitle: string = '';
   @State private letterContent: string = '';
   @State private photoUris: Array<string> = [];
   @State private moodTag: string = '私语';
@@ -124,16 +137,19 @@ struct Index {
     this.startUnlockWatcher();
     this.refreshNotificationPermissionStatus();
     if (this.initialized) {
+      this.handleCardTarget();
       return;
     }
 
     if (this.restoreStoredLetters()) {
       this.initialized = true;
+      this.handleCardTarget();
       return;
     }
 
     const draft: LetterRecord = {
       id: 1,
+      title: '给今天的自己',
       date: '2026.07.18',
       weekday: '星期六',
       recipient: '写给自己',
@@ -150,10 +166,12 @@ struct Index {
       unlockDate: '',
       unlockAt: 0,
       reminderId: 0,
-      photoUris: []
+      photoUris: [],
+      driftStartedAt: 0
     };
     const echo: LetterRecord = {
       id: 2,
+      title: '没有寄出的想念',
       date: '2026.07.19',
       weekday: '星期日',
       recipient: '写给不会收到的人',
@@ -170,7 +188,8 @@ struct Index {
       unlockDate: '',
       unlockAt: 0,
       reminderId: 0,
-      photoUris: []
+      photoUris: [],
+      driftStartedAt: 0
     };
 
     this.drafts = [draft];
@@ -179,6 +198,7 @@ struct Index {
     this.activeEchoId = echo.id;
     this.persistLetters();
     this.initialized = true;
+    this.handleCardTarget();
   }
 
   aboutToDisappear(): void {
@@ -201,6 +221,7 @@ struct Index {
   private normalizeRecord(record: LetterRecord): LetterRecord {
     return {
       id: record.id,
+      title: record.title ?? '',
       date: record.date,
       weekday: record.weekday,
       recipient: record.recipient,
@@ -217,7 +238,8 @@ struct Index {
       unlockDate: record.unlockDate ?? '',
       unlockAt: record.unlockAt ?? 0,
       reminderId: record.reminderId ?? 0,
-      photoUris: record.photoUris ?? []
+      photoUris: record.photoUris ?? [],
+      driftStartedAt: record.driftStartedAt ?? 0
     };
   }
 
@@ -264,8 +286,81 @@ struct Index {
       activeEchoId: this.activeEchoId
     };
     store.putSync(this.letterStoreKey, JSON.stringify(snapshot));
-    store.flush().catch((_err: BusinessError) => {
+    store.flush()
+      .then(() => {
+        this.refreshServiceCards();
+      })
+      .catch((_err: BusinessError) => {
+      });
+  }
+
+  private refreshServiceCards(): void {
+    const store: preferences.Preferences | null = this.getLetterStore();
+    if (store === null) {
+      return;
+    }
+    const rawIds: string = store.getSync('letter_form_ids', '[]') as string;
+    let formIds: Array<string> = [];
+    try {
+      formIds = JSON.parse(rawIds) as Array<string>;
+    } catch (_err) {
+      return;
+    }
+    if (formIds.length === 0) {
+      return;
+    }
+
+    let data: ServiceCardData = {
+      hasLetter: false,
+      date: '微语',
+      emotionAndRitual: '给此刻留一点空间',
+      content: '最近，有没有什么想写下来的？',
+      target: 'write'
+    };
+    if (this.echoCards.length > 0) {
+      const letter: LetterRecord = this.echoCards[0];
+      data = {
+        hasLetter: true,
+        date: letter.date,
+        emotionAndRitual: `${letter.emotion} · ${letter.ritual}`,
+        content: letter.ritual === '燃成光点' ? letter.echoLine : this.createSoftExcerpt(letter.content, 46),
+        target: `letter:${letter.id}`
+      };
+    }
+    const cardData: formBindingData.FormBindingData = formBindingData.createFormBindingData(data);
+    formIds.forEach((formId: string) => {
+      formProvider.updateForm(formId, cardData).catch((_err: BusinessError) => {
+      });
     });
+  }
+
+  private onCardTargetChanged(): void {
+    this.handleCardTarget();
+  }
+
+  private handleCardTarget(): void {
+    if (!this.initialized || this.cardTarget.length === 0) {
+      return;
+    }
+    const target: string = this.cardTarget;
+    this.cardTarget = '';
+    if (target === 'write') {
+      this.openComposer();
+      return;
+    }
+    if (target.startsWith('letter:')) {
+      const targetId: number = Number(target.slice(7));
+      let index: number = 0;
+      while (index < this.echoCards.length) {
+        if (this.echoCards[index].id === targetId) {
+          this.enterEcho(this.echoCards[index]);
+          return;
+        }
+        index += 1;
+      }
+      this.currentPage = 'home';
+      this.homeTab = 0;
+    }
   }
 
   private containsRecordId(items: Array<LetterRecord>, targetId: number): boolean {
@@ -795,6 +890,7 @@ struct Index {
     let record: LetterRecord = this.createRecord('寄给未来', '把愿望留给未来的自己开启');
     record = {
       id: record.id,
+      title: record.title,
       date: record.date,
       weekday: record.weekday,
       recipient: record.recipient,
@@ -811,12 +907,14 @@ struct Index {
       unlockDate: openDate,
       unlockAt: unlockDate.getTime(),
       reminderId: 0,
-      photoUris: [...this.photoUris]
+      photoUris: [...this.photoUris],
+      driftStartedAt: 0
     };
 
     const reminderId: number = await this.scheduleFutureReminder(record);
     record = {
       id: record.id,
+      title: record.title,
       date: record.date,
       weekday: record.weekday,
       recipient: record.recipient,
@@ -833,7 +931,8 @@ struct Index {
       unlockDate: record.unlockDate,
       unlockAt: record.unlockAt,
       reminderId: reminderId,
-      photoUris: [...record.photoUris]
+      photoUris: [...record.photoUris],
+      driftStartedAt: record.driftStartedAt
     };
 
     this.futureLetters = [record, ...this.futureLetters];
@@ -857,20 +956,36 @@ struct Index {
 
   private applyRitual(index: number): void {
     const ritual: SelectItem = this.ritualOptions[index];
+    if (ritual.id === 'spark') {
+      this.currentPage = 'sparkConfirm';
+      this.statusText = '燃成光点后，正文和照片将无法恢复。';
+      return;
+    }
+    if (ritual.id === 'future') {
+      this.refreshNotificationPermissionStatus();
+      this.currentPage = 'futureSchedule';
+      this.statusText = '选一个未来日期，到那天我再提醒你打开。';
+      return;
+    }
+    this.completeRitual(index);
+  }
+
+  private confirmSparkRitual(): void {
+    this.completeRitual(1);
+  }
+
+  private completeRitual(index: number): void {
+    const ritual: SelectItem = this.ritualOptions[index];
     const originalContent: string = this.letterContent.trim();
     let record: LetterRecord = this.createRecord(ritual.title, ritual.subtitle);
 
     if (ritual.id === 'seal') {
       this.sealedLetters = [record, ...this.sealedLetters];
       this.statusText = '这封信已经被封存在时光盒里了。';
-    } else if (ritual.id === 'future') {
-      this.refreshNotificationPermissionStatus();
-      this.currentPage = 'futureSchedule';
-      this.statusText = '选一个未来日期，到那天我再提醒你打开。';
-      return;
     } else if (ritual.id === 'drift') {
       record = {
         id: record.id,
+        title: record.title,
         date: record.date,
         weekday: record.weekday,
         recipient: record.recipient,
@@ -878,22 +993,24 @@ struct Index {
         emotion: record.emotion,
         emotionHint: record.emotionHint,
         ritual: record.ritual,
-        ritualHint: '它会带着这段情绪慢慢漂远，只留下淡淡一小段摘句。',
-        content: this.createSoftExcerpt(record.content, 20),
-        echoLine: '它正在漂流，你不用急着把它追回来。',
-        keywords: [record.emotion, '漂流', '慢慢放下'],
+        ritualHint: '完整内容和照片仍被好好保存。想重新面对时，你可以随时把它捡回来。',
+        content: record.content,
+        echoLine: '它正在漂流；等你准备好，也可以把它捡回来。',
+        keywords: [record.emotion, '漂流', '暂时放下'],
         moodTag: record.moodTag,
         anonymous: record.anonymous,
         unlockDate: record.unlockDate,
         unlockAt: record.unlockAt,
         reminderId: record.reminderId,
-        photoUris: [...record.photoUris]
+        photoUris: [...record.photoUris],
+        driftStartedAt: Date.now()
       };
       this.driftLetters = [record, ...this.driftLetters];
       this.statusText = '这封信已经开始漂流了，会慢慢离远一点。';
     } else if (ritual.id === 'spark') {
       record = {
         id: record.id,
+        title: record.title,
         date: record.date,
         weekday: record.weekday,
         recipient: record.recipient,
@@ -901,16 +1018,17 @@ struct Index {
         emotion: record.emotion,
         emotionHint: record.emotionHint,
         ritual: record.ritual,
-        ritualHint: '完整正文已经化成光点，只留下这一束很轻的回声。',
-        content: this.createSparkExcerpt(record.content),
-        echoLine: '它已经化成光点，全文不再保留。',
+        ritualHint: '正文和照片已经化成光点，只留下这一刻的情绪与回声。',
+        content: '',
+        echoLine: '这封信已经化成一颗光。',
         keywords: [record.emotion, '光点', '放下'],
         moodTag: record.moodTag,
         anonymous: record.anonymous,
         unlockDate: record.unlockDate,
         unlockAt: record.unlockAt,
         reminderId: record.reminderId,
-        photoUris: ritual.id === 'spark' ? [] : [...record.photoUris]
+        photoUris: [],
+        driftStartedAt: 0
       };
       this.statusText = '这封信已经化成光点，只留下短短一束回声。';
     }
@@ -928,6 +1046,7 @@ struct Index {
     const now: Date = new Date();
     const record: LetterRecord = {
       id: this.nextId,
+      title: this.letterTitle.trim(),
       date: this.formatDate(now),
       weekday: this.getWeekday(now.getDay()),
       recipient: recipient.title,
@@ -944,7 +1063,8 @@ struct Index {
       unlockDate: '',
       unlockAt: 0,
       reminderId: 0,
-      photoUris: [...this.photoUris]
+      photoUris: [...this.photoUris],
+      driftStartedAt: 0
     };
     this.nextId += 1;
     return record;
@@ -1050,10 +1170,10 @@ struct Index {
       return '完整内容会被好好收着，等你想打开时再回来。';
     }
     if (record.ritual === '燃成光点') {
-      return '完整正文已经散去，只留下这一束短短的回声。';
+      return '正文和照片已经散去，只留下当时的情绪与这一束回声。';
     }
     if (record.ritual === '漂流') {
-      return '它会带着你的情绪慢慢离远，只留下淡淡的一小段。';
+      return '完整内容仍在漂流瓶里，等你准备好时可以随时捡回来。';
     }
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return `它会在 ${record.unlockDate} 再次来到你面前。`;
@@ -1066,10 +1186,10 @@ struct Index {
 
   private getEchoContentLabel(record: LetterRecord): string {
     if (record.ritual === '燃成光点') {
-      return '最后留下的一束光：';
+      return '原文状态：';
     }
     if (record.ritual === '漂流') {
-      return '漂流后留下的摘句：';
+      return '漂流瓶中的原文：';
     }
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return '未来开启时间：';
@@ -1081,6 +1201,9 @@ struct Index {
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return record.unlockDate;
     }
+    if (record.ritual === '燃成光点') {
+      return '正文和照片已被永久清除，无法恢复。';
+    }
     return `“${record.content}”`;
   }
 
@@ -1088,7 +1211,26 @@ struct Index {
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return `将于 ${record.unlockDate} 开启\n在那之前，这封信会先替你安静地留着。`;
     }
+    if (record.ritual === '燃成光点') {
+      return '原文与照片已化成光点，只留下当时的情绪。';
+    }
     return `“${record.content}”`;
+  }
+
+  private getSparkLetters(): Array<LetterRecord> {
+    return this.echoCards.filter((item: LetterRecord) => item.ritual === '燃成光点');
+  }
+
+  private getDriftAgeLabel(record: LetterRecord): string {
+    if (record.driftStartedAt <= 0) {
+      return '已经漂流一段时间';
+    }
+    const elapsed: number = Date.now() - record.driftStartedAt;
+    const days: number = Math.floor(elapsed / (24 * 60 * 60 * 1000));
+    if (days <= 0) {
+      return '刚刚开始漂流';
+    }
+    return `已漂流 ${days} 天`;
   }
 
   private getEchoLine(ritual: string): string {
@@ -1123,6 +1265,7 @@ struct Index {
     this.selectedRecipientIndex = -1;
     this.selectedEmotionIndex = -1;
     this.emotionConfirmLabel = '是什么呢';
+    this.letterTitle = '';
     this.letterContent = '';
     this.photoUris = [];
     this.isAnonymous = false;
@@ -1133,6 +1276,7 @@ struct Index {
   private continueDraft(record: LetterRecord): void {
     this.selectedRecipientIndex = this.findIndexByTitle(this.recipientOptions, record.recipient);
     this.selectedEmotionIndex = this.findIndexByTitle(this.emotionOptions, record.emotion);
+    this.letterTitle = record.title ?? '';
     this.letterContent = record.content;
     this.photoUris = [...(record.photoUris ?? [])];
     this.moodTag = record.moodTag;
@@ -1140,6 +1284,40 @@ struct Index {
     this.futureReminderDate = this.getMinimumFutureDate();
     this.currentPage = 'writing';
     this.statusText = '已经帮你把草稿重新铺开了。';
+  }
+
+  private recallDriftLetter(record: LetterRecord): void {
+    const draft: LetterRecord = {
+      id: record.id,
+      title: record.title,
+      date: record.date,
+      weekday: record.weekday,
+      recipient: record.recipient,
+      recipientHint: record.recipientHint,
+      emotion: record.emotion,
+      emotionHint: record.emotionHint,
+      ritual: '草稿',
+      ritualHint: '从漂流中捡回，等你准备好再继续',
+      content: record.content,
+      keywords: [record.emotion, record.moodTag, '重新面对'],
+      echoLine: '你把它捡回来了，可以继续写下去。',
+      moodTag: record.moodTag,
+      anonymous: record.anonymous,
+      unlockDate: '',
+      unlockAt: 0,
+      reminderId: 0,
+      photoUris: [...record.photoUris],
+      driftStartedAt: 0
+    };
+    this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== record.id);
+    this.echoCards = this.echoCards.filter((item: LetterRecord) => item.id !== record.id);
+    this.drafts = [draft, ...this.drafts.filter((item: LetterRecord) => item.id !== record.id)];
+    if (this.activeEchoId === record.id) {
+      this.activeEchoId = this.echoCards.length > 0 ? this.echoCards[0].id : -1;
+    }
+    this.persistLetters();
+    this.continueDraft(draft);
+    this.statusText = '漂流的信已经捡回，完整正文和照片都还在。';
   }
 
   private findIndexByTitle(items: Array<SelectItem>, title: string): number {
@@ -1211,6 +1389,12 @@ struct Index {
     if (this.archiveKind === 'future') {
       return '未来信';
     }
+    if (this.archiveKind === 'drift') {
+      return '漂流瓶';
+    }
+    if (this.archiveKind === 'spark') {
+      return '光点星空';
+    }
     return '情绪回声卡';
   }
 
@@ -1224,6 +1408,12 @@ struct Index {
     if (this.archiveKind === 'future') {
       return '等未来的某天，再由你亲手打开。';
     }
+    if (this.archiveKind === 'drift') {
+      return '这里保留完整内容；等你准备好，可以把信捡回来继续写。';
+    }
+    if (this.archiveKind === 'spark') {
+      return '原文已经散去，只留下写信日期、情绪与温柔回声。';
+    }
     return '把每一次安放都留成一张回声卡。';
   }
 
@@ -1236,6 +1426,12 @@ struct Index {
     }
     if (this.archiveKind === 'future') {
       return this.futureLetters;
+    }
+    if (this.archiveKind === 'drift') {
+      return this.driftLetters;
+    }
+    if (this.archiveKind === 'spark') {
+      return this.getSparkLetters();
     }
     return this.echoCards;
   }
@@ -1252,6 +1448,13 @@ struct Index {
           merged.push(item);
         }
       });
+    });
+
+    merged.sort((left: LetterRecord, right: LetterRecord) => {
+      if (left.date === right.date) {
+        return right.id - left.id;
+      }
+      return left.date < right.date ? 1 : -1;
     });
 
     return merged.slice(0, limit);
@@ -1489,6 +1692,8 @@ struct Index {
             this.currentPage = 'emotion';
           } else if (this.currentPage === 'futureSchedule') {
             this.currentPage = 'ritual';
+          } else if (this.currentPage === 'sparkConfirm') {
+            this.currentPage = 'ritual';
           } else if (this.currentPage === 'ritual') {
             this.currentPage = 'writing';
           } else {
@@ -1593,11 +1798,13 @@ struct Index {
 
         Row() {
           Column({ space: 4 }) {
-            Text(item.date)
+            Text(item.title.trim().length > 0 ? item.title : '这一封信没有标题')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor('#362F29')
-            Text(`${item.emotion} · ${item.ritual}`)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(`${item.date} · ${item.weekday}`)
               .fontSize(12)
               .fontColor('#93897E')
           }
@@ -1897,6 +2104,8 @@ struct Index {
               this.buildMailboxCard('草稿箱', `${this.drafts.length} 封草稿`, '#F5EFE7', 'draft')
               this.buildMailboxCard('封存的信', `${this.sealedLetters.length} 封信件`, '#F4EEE7', 'sealed')
               this.buildMailboxCard('未来信', `${this.getUnlockedFutureCount()} / ${this.futureLetters.length} 已开启`, '#F2F4F8', 'future')
+              this.buildMailboxCard('漂流瓶', `${this.driftLetters.length} 封正在漂流`, '#EAF0F6', 'drift')
+              this.buildMailboxCard('光点星空', `${this.getSparkLetters().length} 颗光点`, '#F9ECD8', 'spark')
               this.buildMailboxCard('情绪回声卡', `${this.echoCards.length} 张回声卡`, '#F5F1EA', 'echo')
             }
             .width('100%')
@@ -2019,6 +2228,20 @@ struct Index {
       )
 
       Column({ space: 12 }) {
+        TextInput({ text: this.letterTitle, placeholder: '给这封信写一个标题（选填）' })
+          .width('100%')
+          .height(52)
+          .fontSize(16)
+          .fontColor('#2F2721')
+          .placeholderColor('#AAA096')
+          .backgroundColor('#FBF8F3')
+          .borderRadius(18)
+          .padding({ left: 18, right: 18 })
+          .maxLength(30)
+          .onChange((value: string) => {
+            this.letterTitle = value;
+          })
+
         Stack({ alignContent: Alignment.BottomEnd }) {
           TextArea({ text: this.letterContent, placeholder: '今天想说什么，就从第一句开始。' })
             .width('100%')
@@ -2128,6 +2351,59 @@ struct Index {
         })
       }
       .width('100%')
+    }
+  }
+
+  @Builder
+  private buildSparkConfirmPage() {
+    Scroll() {
+      Column({ space: 18 }) {
+        this.buildBackHeader('确认燃成光点？', '这是一种不可撤回的安放方式。')
+
+        Column({ space: 16 }) {
+          Text('✨')
+            .fontSize(44)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+
+          Text('确认后，信的正文和照片会被永久清除。')
+            .fontSize(20)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#332B25')
+            .width('100%')
+            .textAlign(TextAlign.Center)
+
+          Text('系统只会留下写信日期、情绪、标题和一束温柔回声，原文与照片之后无法找回。')
+            .fontSize(14)
+            .lineHeight(24)
+            .fontColor('#7D746A')
+            .width('100%')
+            .textAlign(TextAlign.Center)
+        }
+        .width('100%')
+        .padding({ left: 24, right: 24, top: 28, bottom: 28 })
+        .backgroundColor('#FBF7F1')
+        .borderRadius(28)
+
+        Column({ space: 12 }) {
+          Column() {
+            this.buildPrimaryAction('确认燃成光点', '#C99B72')
+          }
+          .onClick(() => {
+            this.confirmSparkRitual();
+          })
+
+          Column() {
+            this.buildSecondaryAction('再想一想')
+          }
+          .onClick(() => {
+            this.currentPage = 'ritual';
+          })
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 30 })
     }
   }
 
@@ -2272,27 +2548,29 @@ struct Index {
             .fontColor('#7D746A')
             .width('100%')
 
-          Text(this.getEchoContentLabel(this.getActiveEcho()))
-            .fontSize(13)
-            .fontColor('#7D746A')
-            .width('100%')
+          if (this.getActiveEcho().ritual !== '燃成光点') {
+            Text(this.getEchoContentLabel(this.getActiveEcho()))
+              .fontSize(13)
+              .fontColor('#7D746A')
+              .width('100%')
 
-          Text(this.getDisplayedContent(this.getActiveEcho()))
-            .fontSize(17)
-            .lineHeight(28)
-            .fontColor('#342C26')
-            .width('100%')
+            Text(this.getDisplayedContent(this.getActiveEcho()))
+              .fontSize(17)
+              .lineHeight(28)
+              .fontColor('#342C26')
+              .width('100%')
 
-          Text('温柔回声：')
-            .fontSize(13)
-            .fontColor('#7D746A')
-            .width('100%')
+            Text('温柔回声：')
+              .fontSize(13)
+              .fontColor('#7D746A')
+              .width('100%')
 
-          Text(this.getActiveEcho().echoLine)
-            .fontSize(14)
-            .lineHeight(22)
-            .fontColor('#6D645B')
-            .width('100%')
+            Text(this.getActiveEcho().echoLine)
+              .fontSize(14)
+              .lineHeight(22)
+              .fontColor('#6D645B')
+              .width('100%')
+          }
 
         }
         .width('100%')
@@ -2301,21 +2579,42 @@ struct Index {
         .borderRadius(28)
 
         Column({ space: 12 }) {
-          Column() {
-            this.buildPrimaryAction('保存回声卡', '#9AAFC4')
-          }
-          .onClick(() => {
-            this.homeTab = 1;
-            this.currentPage = 'home';
-            this.statusText = '回声卡已经留在你的信箱里。';
-          })
+          if (this.getActiveEcho().ritual === '漂流') {
+            Column() {
+              this.buildPrimaryAction('捡回来继续写', '#97AEC3')
+            }
+            .onClick(() => {
+              this.recallDriftLetter(this.getActiveEcho());
+            })
 
-          Column() {
-            this.buildSecondaryAction('返回信箱')
+            Column() {
+              this.buildSecondaryAction('先让它继续漂流')
+            }
+            .onClick(() => {
+              this.currentPage = 'home';
+            })
+          } else {
+            Column() {
+              this.buildPrimaryAction(
+                this.getActiveEcho().ritual === '燃成光点' ? '收下这颗光点' : '保存回声卡',
+                '#9AAFC4'
+              )
+            }
+            .onClick(() => {
+              this.homeTab = 1;
+              this.currentPage = 'home';
+              this.statusText = this.getActiveEcho().ritual === '燃成光点'
+                ? '这颗光点已经留在你的星空里。'
+                : '回声卡已经留在你的信箱里。';
+            })
+
+            Column() {
+              this.buildSecondaryAction('返回信箱')
+            }
+            .onClick(() => {
+              this.currentPage = 'home';
+            })
           }
-          .onClick(() => {
-            this.currentPage = 'home';
-          })
         }
         .width('100%')
       }
@@ -2398,7 +2697,25 @@ struct Index {
                   .fontSize(13)
                   .fontColor('#97AEC3')
                   .width('100%')
-              } else {
+              } else if (this.archiveKind === 'drift') {
+                Row() {
+                  Text(this.getDriftAgeLabel(item))
+                    .fontSize(12)
+                    .fontColor('#8A8178')
+                  Blank()
+                  Text('捡回来继续写')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#FFFFFF')
+                    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+                    .backgroundColor('#97AEC3')
+                    .borderRadius(14)
+                    .onClick(() => {
+                      this.recallDriftLetter(item);
+                    })
+                }
+                .width('100%')
+              } else if (this.archiveKind !== 'spark') {
                 Text(item.echoLine)
                   .fontSize(12)
                   .fontColor('#8A8178')
@@ -2412,7 +2729,7 @@ struct Index {
             .onClick(() => {
               if (this.archiveKind === 'draft') {
                 this.continueDraft(item);
-              } else {
+              } else if (this.archiveKind !== 'drift') {
                 this.enterEcho(item);
               }
             })
@@ -2505,6 +2822,8 @@ struct Index {
           this.buildWritingPage()
         } else if (this.currentPage === 'ritual') {
           this.buildRitualPage()
+        } else if (this.currentPage === 'sparkConfirm') {
+          this.buildSparkConfirmPage()
         } else if (this.currentPage === 'futureSchedule') {
           this.buildFutureSchedulePage()
         } else if (this.currentPage === 'archive') {
