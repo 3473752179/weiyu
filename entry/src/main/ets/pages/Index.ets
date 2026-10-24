@@ -5,6 +5,7 @@ import { notificationManager } from '@kit.NotificationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { formBindingData, formProvider } from '@kit.FormKit';
+import { WeiyuTheme } from '../theme/WeiyuTheme';
 
 interface SelectItem {
   id: string;
@@ -28,6 +29,7 @@ interface LetterRecord {
   content: string;
   keywords: Array<string>;
   echoLine: string;
+  afterglow?: string;
   moodTag: string;
   anonymous: boolean;
   unlockDate: string;
@@ -94,6 +96,7 @@ struct Index {
   @State private homeTab: number = 0;
   @State private echoTimeFilter: string = 'all';
   @State private archiveKind: string = 'draft';
+  @State private archiveReturnPage: string = 'home';
   @State private selectedRecipientIndex: number = -1;
   @State private selectedEmotionIndex: number = -1;
   @State private customRecipient: string = '';
@@ -101,6 +104,7 @@ struct Index {
   @State private emotionConfirmLabel: string = '是什么呢';
   @State private letterTitle: string = '';
   @State private letterContent: string = '';
+  @State private sparkAfterglow: string = '';
   @State private photoUris: Array<string> = [];
   @State private moodTag: string = '私语';
   @State private isAnonymous: boolean = false;
@@ -126,6 +130,7 @@ struct Index {
   @State private driftDetailEntryOffset: number = 18;
   @State private driftDetailEntryOpacity: number = 0;
   @State private initialDriftReceipt: boolean = false;
+  @State private contentReturnPage: string = 'home';
   @State private driftLaunching: boolean = false;
   @State private driftBottleOffset: number = 0;
   @State private driftBottleScale: number = 1;
@@ -166,8 +171,6 @@ struct Index {
 
   aboutToAppear(): void {
     this.startUnlockWatcher();
-    this.startDriftMotion();
-    this.startDriftHedgehogAnimation();
     this.refreshNotificationPermissionStatus();
     if (this.initialized) {
       this.handleCardTarget();
@@ -268,6 +271,7 @@ struct Index {
       content: record.content,
       keywords: record.keywords,
       echoLine: record.echoLine,
+      afterglow: record.afterglow ?? '',
       moodTag: record.moodTag,
       anonymous: record.anonymous,
       unlockDate: record.unlockDate ?? '',
@@ -871,6 +875,7 @@ struct Index {
   }
 
   private openArchive(kind: string): void {
+    this.archiveReturnPage = this.currentPage;
     this.archiveKind = kind;
     this.selectedSparkId = -1;
     this.currentPage = kind === 'spark' ? 'sparkSky' : (kind === 'drift' ? 'driftSea' : 'archive');
@@ -1089,7 +1094,7 @@ struct Index {
     this.activeEchoId = record.id;
     this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== originalContent);
     this.persistLetters();
-    this.currentPage = 'echo';
+    this.enterEcho(record, 'ritual');
     this.statusText = reminderId > 0
       ? '它已经寄往未来，到时间系统会提醒你打开。'
       : '未来信已经保存好了，但当前设备暂时没有成功接管到点提醒。';
@@ -1171,7 +1176,9 @@ struct Index {
         ritual: record.ritual,
         ritualHint: '正文和照片已经化成光点，只留下这一刻的情绪与回声。',
         content: '',
-        echoLine: '这封信已经化成一颗光。',
+        echoLine: this.sparkAfterglow.trim().length > 0
+          ? this.sparkAfterglow.trim() : '这封信已经化成一颗光。',
+        afterglow: this.sparkAfterglow.trim(),
         keywords: [record.emotion, '光点', '放下'],
         moodTag: record.moodTag,
         anonymous: record.anonymous,
@@ -1189,10 +1196,10 @@ struct Index {
     this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== originalContent);
     this.persistLetters();
     if (ritual.id === 'drift') {
-      this.enterEcho(record);
+      this.enterEcho(record, 'ritual');
       this.initialDriftReceipt = true;
     } else {
-      this.currentPage = 'echo';
+      this.enterEcho(record, 'ritual');
     }
   }
 
@@ -1214,6 +1221,7 @@ struct Index {
       content: this.letterContent.trim(),
       keywords: [emotion.title, this.moodTag, ritual],
       echoLine: this.getEchoLine(ritual),
+      afterglow: '',
       moodTag: this.moodTag,
       anonymous: this.isAnonymous,
       unlockDate: '',
@@ -1448,6 +1456,9 @@ struct Index {
       return;
     }
     const id: number = this.getActiveEcho().id;
+    if (this.contentReturnPage !== 'sparkSky') {
+      this.archiveReturnPage = this.currentPage;
+    }
     this.selectedSparkId = id;
     if (this.isSparkCollected(id)) {
       this.currentPage = 'sparkSky';
@@ -1611,6 +1622,7 @@ struct Index {
     this.emotionConfirmLabel = '是什么呢';
     this.letterTitle = '';
     this.letterContent = '';
+    this.sparkAfterglow = '';
     this.photoUris = [];
     this.isAnonymous = false;
     this.moodTag = '私语';
@@ -1641,7 +1653,7 @@ struct Index {
     this.futureReminderDate = this.getMinimumFutureDate();
     this.driftReflection = record.driftMoodNow && record.driftMoodNow.length > 0
       ? `漂流前：${record.emotion}  →  现在：${record.driftMoodNow}` : '';
-    this.writingReturnPage = fromDrift ? 'driftDetail' : 'emotion';
+    this.writingReturnPage = fromDrift ? 'driftDetail' : this.currentPage;
     if (!fromDrift) {
       this.recalledDriftOrigin = undefined;
     }
@@ -1696,7 +1708,8 @@ struct Index {
     return 0;
   }
 
-  private enterEcho(record: LetterRecord): void {
+  private enterEcho(record: LetterRecord, returnPage: string = ''): void {
+    this.contentReturnPage = returnPage.length > 0 ? returnPage : this.currentPage;
     this.openedMenuId = -1;
     this.recalledDriftOrigin = undefined;
     this.writingReturnPage = 'emotion';
@@ -1892,7 +1905,7 @@ struct Index {
           .fontSize(22)
           .fontColor('#9D9387')
         Text('自定义')
-          .fontSize(11)
+          .fontSize(12)
           .fontColor('#9D9387')
       }
       .justifyContent(FlexAlign.Center)
@@ -1916,11 +1929,11 @@ struct Index {
         Text(item.title)
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#2F2721')
+          .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
         Text(item.subtitle)
           .fontSize(12)
           .lineHeight(18)
-          .fontColor('#9A9085')
+          .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
@@ -1929,14 +1942,17 @@ struct Index {
     }
     .width('100%')
     .padding({ left: 18, right: 14, top: 16, bottom: 16 })
-    .backgroundColor('#FBF8F4')
-    .borderRadius(24)
+    .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+    .borderRadius(WeiyuTheme.RADIUS_CARD)
+    .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
     .shadow({
-      radius: 18,
-      color: '#14000000',
+      radius: 10,
+      color: '#0A000000',
       offsetX: 0,
-      offsetY: 6
+      offsetY: 3
     })
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(`${item.title}，${item.subtitle}`)
     .onClick(() => {
       this.chooseRecipient(index);
     })
@@ -1974,11 +1990,11 @@ struct Index {
         Text(item.title)
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#2F2721')
+          .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
         Text(item.subtitle)
           .fontSize(12)
           .lineHeight(20)
-          .fontColor('#998F84')
+          .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
       }
       .alignItems(HorizontalAlign.Start)
       .width('64%')
@@ -1989,14 +2005,17 @@ struct Index {
     }
     .width('100%')
     .padding({ left: 18, right: 14, top: 16, bottom: 16 })
-    .backgroundColor('#FBF8F4')
-    .borderRadius(24)
+    .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+    .borderRadius(WeiyuTheme.RADIUS_CARD)
+    .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
     .shadow({
-      radius: 18,
-      color: '#14000000',
+      radius: 10,
+      color: '#0A000000',
       offsetX: 0,
-      offsetY: 6
+      offsetY: 3
     })
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(`${item.title}，${item.subtitle}`)
     .onClick(() => {
       this.applyRitual(index);
     })
@@ -2036,7 +2055,7 @@ struct Index {
           .fontWeight(FontWeight.Medium)
           .fontColor('#A0978B')
         Text('慢慢说')
-          .fontSize(11)
+          .fontSize(12)
           .fontColor('#A0978B')
       }
       .justifyContent(FlexAlign.Center)
@@ -2054,11 +2073,11 @@ struct Index {
       Text(item.title)
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#312923')
+        .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
       Text(item.subtitle)
         .fontSize(12)
         .lineHeight(18)
-        .fontColor('#857A70')
+        .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
       Blank()
       Row() {
         Blank()
@@ -2071,16 +2090,19 @@ struct Index {
     .height(172)
     .padding(18)
     .margin({ bottom: 12 })
-    .backgroundColor('#FFFFFF')
-    .borderRadius(24)
+    .backgroundColor(this.selectedEmotionIndex === index ? '#F6FAFA' : WeiyuTheme.COLOR_SURFACE)
+    .borderRadius(WeiyuTheme.RADIUS_CARD)
+    .border({ width: this.selectedEmotionIndex === index ? 1.5 : 1, color: this.selectedEmotionIndex === index ? WeiyuTheme.COLOR_ACCENT : WeiyuTheme.COLOR_BORDER })
     .shadow({
-      radius: 16,
-      color: '#12000000',
+      radius: 8,
+      color: '#08000000',
       offsetX: 0,
-      offsetY: 6
+      offsetY: 3
     })
-    .opacity(this.selectedEmotionIndex < 0 || this.selectedEmotionIndex === index ? 1 : 0.88)
-    .scale(this.selectedEmotionIndex === index ? { x: 1.02, y: 1.02 } : { x: 1, y: 1 })
+    .opacity(this.selectedEmotionIndex < 0 || this.selectedEmotionIndex === index ? 1 : 0.9)
+    .scale(this.selectedEmotionIndex === index ? { x: 1.01, y: 1.01 } : { x: 1, y: 1 })
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(`${item.title}，${item.subtitle}`)
     .onClick(() => {
       this.chooseEmotion(index);
     })
@@ -2090,10 +2112,14 @@ struct Index {
   private buildBackHeader(title: string, subtitle: string) {
     Row() {
       Text('‹')
-        .fontSize(26)
+        .fontSize(30)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#3E362F')
-        .width(28)
+        .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+        .width(WeiyuTheme.TOUCH_TARGET)
+        .height(WeiyuTheme.TOUCH_TARGET)
+        .textAlign(TextAlign.Center)
+        .borderRadius(24)
+        .accessibilityText('返回')
         .onClick(() => {
           if (this.currentPage === 'emotion') {
             this.currentPage = 'recipient';
@@ -2103,19 +2129,25 @@ struct Index {
               this.driftPeek = false;
               this.currentPage = 'driftDetail';
             } else {
-              this.currentPage = 'emotion';
+              this.currentPage = this.writingReturnPage;
             }
           } else if (this.currentPage === 'futureSchedule') {
             this.currentPage = 'ritual';
           } else if (this.currentPage === 'sparkConfirm') {
             this.currentPage = 'ritual';
           } else if (this.currentPage === 'driftDetail') {
-            this.currentPage = 'driftSea';
+            this.currentPage = this.contentReturnPage;
+            this.initialDriftReceipt = false;
             this.driftPeek = false;
           } else if (this.currentPage === 'driftSparkConfirm') {
             this.currentPage = 'driftDetail';
           } else if (this.currentPage === 'ritual') {
             this.currentPage = 'writing';
+          } else if (this.currentPage === 'echo') {
+            this.currentPage = this.contentReturnPage;
+          } else if (this.currentPage === 'archive' ||
+            this.currentPage === 'sparkSky' || this.currentPage === 'driftSea') {
+            this.currentPage = this.archiveReturnPage;
           } else {
             this.currentPage = 'home';
           }
@@ -2124,21 +2156,22 @@ struct Index {
       Column({ space: 4 }) {
         Text(title)
           .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#2D2520')
+          .fontWeight(FontWeight.Medium)
+          .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
         if (subtitle.length > 0) {
           Text(subtitle)
-            .fontSize(12)
-            .fontColor('#8A8178')
+            .fontSize(13)
+            .lineHeight(20)
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
         }
       }
       .alignItems(HorizontalAlign.Start)
-      .margin({ left: 8 })
+      .margin({ left: 4 })
 
       Blank()
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 18, bottom: 4 })
+    .padding({ left: 8, right: WeiyuTheme.PAGE_INSET, top: 14, bottom: 8 })
   }
 
   @Builder
@@ -2148,13 +2181,16 @@ struct Index {
       Text(label)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#FFFFFF')
+        .fontColor(WeiyuTheme.COLOR_WHITE)
       Blank()
     }
     .width('100%')
-    .padding({ top: 14, bottom: 14 })
+    .height(52)
+    .justifyContent(FlexAlign.Center)
     .backgroundColor(background)
-    .borderRadius(18)
+    .borderRadius(WeiyuTheme.RADIUS_CONTROL)
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(label)
   }
 
   @Builder
@@ -2164,13 +2200,17 @@ struct Index {
       Text(label)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#6B6158')
+        .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
       Blank()
     }
     .width('100%')
-    .padding({ top: 14, bottom: 14 })
-    .backgroundColor('#F3EEE7')
-    .borderRadius(18)
+    .height(52)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(WeiyuTheme.COLOR_SURFACE_MUTED)
+    .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+    .borderRadius(WeiyuTheme.RADIUS_CONTROL)
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(label)
   }
 
   @Builder
@@ -2179,17 +2219,21 @@ struct Index {
       Text(title)
         .fontSize(17)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#352D27')
+        .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
       Text(count)
         .fontSize(12)
-        .fontColor('#8F857A')
+        .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
     }
     .alignItems(HorizontalAlign.Start)
     .width('48%')
+    .height(108)
     .padding(18)
     .margin({ bottom: 12 })
     .backgroundColor(color)
-    .borderRadius(24)
+    .borderRadius(WeiyuTheme.RADIUS_CARD)
+    .border({ width: 1, color: '#DDE1DF' })
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(`${title}，${count}`)
     .onClick(() => {
       this.openArchive(kind);
     })
@@ -2202,24 +2246,24 @@ struct Index {
         Text(`${new Date().getDate()}`.padStart(2, '0'))
           .fontSize(34)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#6C99A6')
+          .fontColor(WeiyuTheme.COLOR_ACCENT)
         Text(`${new Date().getFullYear()}年${new Date().getMonth() + 1}月`)
           .fontSize(17)
-          .fontColor('#8D857B')
+          .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
       }
       .width('100%')
       .alignItems(VerticalAlign.Bottom)
 
       Text('—')
         .fontSize(20)
-        .fontColor('#443B34')
+        .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
         .width('100%')
         .margin({ top: 2 })
 
       Text('今天想说什么，\n就从第一句开始。')
         .fontSize(15)
         .lineHeight(25)
-        .fontColor('#5F564E')
+        .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
         .width('100%')
         .margin({ top: 10 })
 
@@ -2237,27 +2281,30 @@ struct Index {
         Text('写一封信')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
+          .fontColor(WeiyuTheme.COLOR_WHITE)
         Blank()
       }
       .width('72%')
       .padding({ top: 14, bottom: 14 })
-      .backgroundColor('#3D3530')
+      .backgroundColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
       .borderRadius(26)
+      .hoverEffect(HoverEffect.Scale)
     }
     .width(292)
     .height(432)
     .alignItems(HorizontalAlign.Center)
     .padding({ left: 28, right: 28, top: 28, bottom: 28 })
-    .backgroundColor('#FFFFFF')
-    .borderRadius(30)
-    .shadow({ radius: 24, color: '#16000000', offsetX: 0, offsetY: 9 })
+    .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+    .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+    .borderRadius(WeiyuTheme.RADIUS_HERO)
+    .shadow({ radius: 18, color: '#10000000', offsetX: 0, offsetY: 7 })
     .opacity(this.homeEntryOpacity)
     .translate({ x: 0, y: this.homeEntryOffset })
     .onClick(() => {
       this.resetComposer();
       this.openComposer();
     })
+    .accessibilityText('写一封信')
     .onAppear(() => {
       this.playHomeEntryAnimation();
     })
@@ -2283,7 +2330,7 @@ struct Index {
             .width('100%')
             .height(314)
             .borderRadius({ topLeft: 24, topRight: 24 })
-            .backgroundColor('#F8F5F0')
+            .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
         }
 
         Row() {
@@ -2291,12 +2338,12 @@ struct Index {
             Text(item.title.trim().length > 0 ? item.title : '这一封信没有标题')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#362F29')
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             Text(`${item.date} · ${item.weekday}`)
               .fontSize(12)
-              .fontColor('#93897E')
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
           }
           .alignItems(HorizontalAlign.Start)
 
@@ -2304,7 +2351,7 @@ struct Index {
 
           Text('...')
             .fontSize(18)
-            .fontColor('#7A7065')
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             .padding({ left: 8, right: 8, top: 2, bottom: 8 })
             .onClick(() => {
               this.toggleDeleteMenu(item.id);
@@ -2315,8 +2362,9 @@ struct Index {
       }
       .width('100%')
       .height(432)
-      .backgroundColor('#FFFFFF')
-      .borderRadius(24)
+      .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+      .borderRadius(WeiyuTheme.RADIUS_CARD)
+      .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
       .onClick(() => {
         this.enterEcho(item);
       })
@@ -2344,7 +2392,8 @@ struct Index {
     }
     .width(292)
     .height(432)
-    .shadow({ radius: 24, color: '#14000000', offsetX: 0, offsetY: 9 })
+    .shadow({ radius: 18, color: '#0E000000', offsetX: 0, offsetY: 7 })
+    .hoverEffect(HoverEffect.Scale)
   }
 
   @Builder
@@ -2355,11 +2404,11 @@ struct Index {
           Text(item.date)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#352D27')
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
           Blank()
           Text(this.getRecordStatusLabel(item))
             .fontSize(12)
-            .fontColor('#7A7065')
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             .padding({ left: 10, right: 10, top: 6, bottom: 6 })
             .backgroundColor(this.getRecordStatusBackground(item))
             .borderRadius(12)
@@ -2375,19 +2424,21 @@ struct Index {
 
         Text(`${item.recipient} · ${item.emotion}`)
           .fontSize(12)
-          .fontColor('#8C8379')
+          .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
 
         Text(this.getArchiveDisplayText(item))
           .fontSize(15)
           .lineHeight(24)
-          .fontColor('#4D433C')
+          .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
       .padding(18)
-      .backgroundColor('#FBF7F1')
-      .borderRadius(22)
+      .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+      .borderRadius(WeiyuTheme.RADIUS_CARD)
+      .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+      .hoverEffect(HoverEffect.Scale)
       .onClick(() => {
         this.enterEcho(item);
       })
@@ -2421,16 +2472,17 @@ struct Index {
     Column({ space: 8 }) {
       Text(value)
         .fontSize(28)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#302822')
+        .fontWeight(FontWeight.Medium)
+        .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
       Text(title)
         .fontSize(13)
-        .fontColor('#7D746A')
+        .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
     }
     .width('50%')
     .padding(18)
     .backgroundColor(color)
-    .borderRadius(22)
+    .borderRadius(WeiyuTheme.RADIUS_CARD)
+    .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
   }
 
   @Builder
@@ -2439,17 +2491,18 @@ struct Index {
       Text(title)
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#433A34')
+        .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
       Text(subtitle)
         .fontSize(13)
         .lineHeight(22)
-        .fontColor('#8B8177')
+        .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
         .textAlign(TextAlign.Center)
     }
     .width('100%')
     .padding({ top: 42, bottom: 42, left: 20, right: 20 })
-    .backgroundColor('#FBF7F1')
-    .borderRadius(24)
+    .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+    .borderRadius(WeiyuTheme.RADIUS_CARD)
+    .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
   }
 
   @Builder
@@ -2461,28 +2514,22 @@ struct Index {
             Column({ space: 6 }) {
               Text('未语')
                 .fontSize(30)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#2F2721')
+                .fontWeight(FontWeight.Medium)
+                .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
               Text('把想说的话，先留在这里。')
-                .fontSize(13)
-                .fontColor('#8D857B')
+                .fontSize(14)
+                .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             }
             .alignItems(HorizontalAlign.Start)
 
             Blank()
-
-            Text('◌')
-              .fontSize(18)
-              .fontColor('#8D857B')
-              .padding(12)
-              .backgroundColor('#F4EEE7')
-              .borderRadius(18)
           }
           .width('100%')
 
           Text(this.statusText)
             .fontSize(12)
-            .fontColor('#9B9185')
+            .lineHeight(19)
+            .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
             .width('100%')
         }
         .width('100%')
@@ -2513,8 +2560,8 @@ struct Index {
           Column({ space: 12 }) {
             Text('情绪回声')
               .fontSize(22)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#2E2721')
+              .fontWeight(FontWeight.Medium)
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
               .width('100%')
 
             Scroll() {
@@ -2522,10 +2569,13 @@ struct Index {
                 ForEach(['all', '7d', '30d', 'year'], (filter: string) => {
                   Text(filter === 'all' ? '全部' : (filter === '7d' ? '近7天' : (filter === '30d' ? '近30天' : '今年')))
                     .fontSize(13)
-                    .fontColor(this.echoTimeFilter === filter ? '#FFFFFF' : '#6E655D')
-                    .padding({ left: 16, right: 16, top: 9, bottom: 9 })
-                    .backgroundColor(this.echoTimeFilter === filter ? '#718F99' : '#F2EDE7')
+                    .fontColor(this.echoTimeFilter === filter ? WeiyuTheme.COLOR_WHITE : WeiyuTheme.COLOR_TEXT_SECONDARY)
+                    .height(44)
+                    .padding({ left: 18, right: 18 })
+                    .textAlign(TextAlign.Center)
+                    .backgroundColor(this.echoTimeFilter === filter ? WeiyuTheme.COLOR_ACCENT_STRONG : WeiyuTheme.COLOR_SURFACE_MUTED)
                     .borderRadius(18)
+                    .accessibilityText(`筛选：${filter === 'all' ? '全部' : (filter === '7d' ? '近7天' : (filter === '30d' ? '近30天' : '今年'))}`)
                     .onClick(() => {
                       this.echoTimeFilter = filter;
                     })
@@ -2553,8 +2603,8 @@ struct Index {
           Column({ space: 14 }) {
             Text('我的空间')
               .fontSize(22)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#2E2721')
+              .fontWeight(FontWeight.Medium)
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
               .width('100%')
 
             Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
@@ -2580,30 +2630,7 @@ struct Index {
   private buildRecipientPage() {
     Scroll() {
       Column({ space: 18 }) {
-        Row() {
-          Text('‹')
-            .fontSize(26)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#3E362F')
-            .width(28)
-            .onClick(() => {
-              this.currentPage = 'home';
-            })
-
-          Blank()
-
-          Text('这封信，想写给谁？')
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#2F2721')
-
-          Blank()
-
-          Text('')
-            .width(28)
-        }
-        .width('100%')
-        .padding({ left: 20, right: 20, top: 18, bottom: 6 })
+        this.buildBackHeader('这封信，想写给谁？', '先想一个名字，再慢慢靠近。')
 
         Column({ space: 14 }) {
         ForEach(this.recipientOptions, (item: SelectItem, index: number) => {
@@ -2616,8 +2643,8 @@ struct Index {
               .width('100%')
               .height(48)
               .fontSize(15)
-              .fontColor('#3E362F')
-              .placeholderColor('#A69B90')
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              .placeholderColor(WeiyuTheme.COLOR_TEXT_MUTED)
               .backgroundColor('#00FFFFFF')
               .padding({ left: 2, right: 2 })
               .maxLength(20)
@@ -2626,9 +2653,9 @@ struct Index {
               })
             Divider()
               .strokeWidth(1)
-              .color('#A89B8D')
+              .color(WeiyuTheme.COLOR_ACCENT)
             Column() {
-              this.buildPrimaryAction(this.customRecipient.trim().length > 0 ? '写给这个人' : '先写下收信人', '#8E8277')
+              this.buildPrimaryAction(this.customRecipient.trim().length > 0 ? '写给这个人' : '先写下收信人', WeiyuTheme.COLOR_ACCENT_STRONG)
             }
             .opacity(this.customRecipient.trim().length > 0 ? 1 : 0.56)
             .onClick(() => {
@@ -2678,8 +2705,8 @@ struct Index {
               .width('100%')
               .height(46)
               .fontSize(15)
-              .fontColor('#3E362F')
-              .placeholderColor('#A69B90')
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              .placeholderColor(WeiyuTheme.COLOR_TEXT_MUTED)
               .backgroundColor('#00FFFFFF')
               .padding({ left: 2, right: 2 })
               .maxLength(16)
@@ -2688,7 +2715,7 @@ struct Index {
               })
             Divider()
               .strokeWidth(1)
-              .color('#A89B8D')
+              .color(WeiyuTheme.COLOR_ACCENT)
           }
           .width('100%')
           .padding({ left: 26, right: 26, bottom: 8 })
@@ -2701,21 +2728,23 @@ struct Index {
             Text(this.emotionConfirmLabel)
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#5F564E')
+              .fontColor(this.selectedEmotionIndex >= 0 &&
+                (this.emotionOptions[this.selectedEmotionIndex].id !== 'other' || this.customEmotion.trim().length > 0)
+                ? WeiyuTheme.COLOR_WHITE : WeiyuTheme.COLOR_TEXT_MUTED)
             Blank()
           }
           .width('68%')
-          .padding({ top: 14, bottom: 14, left: 18, right: 18 })
-          .backgroundColor('#FFFFFF')
-          .borderRadius(18)
-          .shadow({
-            radius: 14,
-            color: '#12000000',
-            offsetX: 0,
-            offsetY: 6
-          })
+          .height(52)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.selectedEmotionIndex >= 0 &&
+            (this.emotionOptions[this.selectedEmotionIndex].id !== 'other' || this.customEmotion.trim().length > 0)
+            ? WeiyuTheme.COLOR_ACCENT_STRONG : WeiyuTheme.COLOR_SURFACE_MUTED)
+          .borderRadius(WeiyuTheme.RADIUS_CONTROL)
+          .border({ width: 1, color: this.selectedEmotionIndex >= 0 ? WeiyuTheme.COLOR_ACCENT : WeiyuTheme.COLOR_BORDER })
           .opacity(this.selectedEmotionIndex >= 0 &&
             (this.emotionOptions[this.selectedEmotionIndex].id !== 'other' || this.customEmotion.trim().length > 0) ? 1 : 0.72)
+          .hoverEffect(HoverEffect.Scale)
+          .accessibilityText(this.emotionConfirmLabel)
           .onClick(() => {
             this.confirmEmotionSelection();
           })
@@ -2739,10 +2768,10 @@ struct Index {
       if (this.driftReflection.length > 0) {
         Text(this.driftReflection)
           .fontSize(13)
-          .fontColor('#4E7884')
+          .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
           .width('90%')
           .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-          .backgroundColor('#E8F2F2')
+          .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
           .borderRadius(14)
       }
 
@@ -2751,10 +2780,11 @@ struct Index {
           .width('100%')
           .height(52)
           .fontSize(16)
-          .fontColor('#2F2721')
-          .placeholderColor('#AAA096')
-          .backgroundColor('#FBF8F3')
-          .borderRadius(18)
+          .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+          .placeholderColor(WeiyuTheme.COLOR_TEXT_MUTED)
+          .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+          .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+          .borderRadius(WeiyuTheme.RADIUS_CONTROL)
           .padding({ left: 18, right: 18 })
           .maxLength(30)
           .onChange((value: string) => {
@@ -2766,8 +2796,10 @@ struct Index {
             .width('100%')
             .height('100%')
             .fontSize(18)
-            .fontColor('#2F2721')
-            .backgroundColor('#FBF8F3')
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+            .placeholderColor(WeiyuTheme.COLOR_TEXT_MUTED)
+            .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+            .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
             .borderRadius(28)
             .padding(20)
             .onChange((value: string) => {
@@ -2776,7 +2808,7 @@ struct Index {
 
           Text(`${this.letterContent.length} 字`)
             .fontSize(13)
-            .fontColor('#8C8379')
+            .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
             .margin({ right: 22, bottom: 18 })
         }
         .width('100%')
@@ -2807,16 +2839,19 @@ struct Index {
           Column({ space: 4 }) {
             Text('＋')
               .fontSize(26)
-              .fontColor('#7A7067')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             Text('照片')
               .fontSize(12)
-              .fontColor('#7A7067')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
           }
           .width(72)
           .height(72)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor('#F1ECE5')
+          .backgroundColor(WeiyuTheme.COLOR_SURFACE_MUTED)
+          .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
           .borderRadius(14)
+          .hoverEffect(HoverEffect.Scale)
+          .accessibilityText('添加照片')
           .onClick(() => {
             this.choosePhotos();
           })
@@ -2834,7 +2869,7 @@ struct Index {
           })
 
           Column() {
-            this.buildPrimaryAction('继续安放', '#97AEC3')
+            this.buildPrimaryAction('继续安放', WeiyuTheme.COLOR_ACCENT)
           }
           .width('48%')
           .onClick(() => {
@@ -2880,33 +2915,79 @@ struct Index {
         this.buildBackHeader('确认燃成光点？', '这是一种不可撤回的安放方式。')
 
         Column({ space: 16 }) {
-          Text('✨')
-            .fontSize(44)
-            .width('100%')
-            .textAlign(TextAlign.Center)
+          Stack({ alignContent: Alignment.Center }) {
+            Circle()
+              .width(58)
+              .height(58)
+              .fill('#D8C7A1')
+              .opacity(0.12)
+            Circle()
+              .width(22)
+              .height(22)
+              .fill('#D8C7A1')
+          }
+          .width('100%')
+          .height(70)
 
           Text('确认后，信的正文和照片会被永久清除。')
             .fontSize(20)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#332B25')
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
             .width('100%')
             .textAlign(TextAlign.Center)
 
           Text('系统只会留下写信日期、情绪、标题和一束温柔回声，原文与照片之后无法找回。')
             .fontSize(14)
             .lineHeight(24)
-            .fontColor('#7D746A')
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             .width('100%')
             .textAlign(TextAlign.Center)
+
+          Divider()
+            .strokeWidth(1)
+            .color(WeiyuTheme.COLOR_BORDER)
+            .margin({ top: 4, bottom: 2 })
+
+          Column({ space: 8 }) {
+            Text('留下一句余光（选填）')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              .width('100%')
+            TextInput({
+              text: this.sparkAfterglow,
+              placeholder: '例如：答案还没出现，但我已经开始向前。'
+            })
+              .width('100%')
+              .height(50)
+              .fontSize(15)
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              .placeholderColor(WeiyuTheme.COLOR_TEXT_MUTED)
+              .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+              .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+              .borderRadius(WeiyuTheme.RADIUS_CONTROL)
+              .padding({ left: 16, right: 16 })
+              .maxLength(50)
+              .onChange((value: string) => {
+                this.sparkAfterglow = value;
+              })
+            Text('原文会消失，这句话会替它留在星空里。')
+              .fontSize(12)
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+              .width('100%')
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
         }
         .width('100%')
         .padding({ left: 24, right: 24, top: 28, bottom: 28 })
-        .backgroundColor('#FBF7F1')
+        .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+        .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
         .borderRadius(28)
 
         Column({ space: 12 }) {
           Column() {
-            this.buildPrimaryAction('确认燃成光点', '#C99B72')
+            this.buildPrimaryAction('确认燃成光点', '#B98963')
           }
           .onClick(() => {
             this.confirmSparkRitual();
@@ -2936,7 +3017,7 @@ struct Index {
           Text('未来开启日期')
             .fontSize(18)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#312923')
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
             .width('100%')
 
           DatePicker({
@@ -2946,8 +3027,9 @@ struct Index {
           })
             .width('100%')
             .height(210)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(24)
+            .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+            .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+            .borderRadius(WeiyuTheme.RADIUS_CARD)
             .padding({ left: 12, right: 12, top: 10, bottom: 10 })
             .onDateChange((value: Date) => {
               this.futureReminderDate = value;
@@ -2956,17 +3038,17 @@ struct Index {
           Column({ space: 8 }) {
             Text('系统会在下面这个时间提醒你：')
               .fontSize(13)
-              .fontColor('#8A8178')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
               .width('100%')
             Text(this.formatDateTime(this.getFutureReminderMoment(this.futureReminderDate)))
               .fontSize(20)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#352D27')
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
               .width('100%')
             Text('默认在当天 09:00 自动弹通知，到了时间这封未来信也会解锁。')
               .fontSize(12)
               .lineHeight(20)
-              .fontColor('#8A8178')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
               .width('100%')
             Text(this.getFuturePermissionHint())
               .fontSize(12)
@@ -2976,8 +3058,9 @@ struct Index {
           }
           .width('100%')
           .padding(18)
-          .backgroundColor('#FBF7F1')
-          .borderRadius(24)
+          .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+          .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+          .borderRadius(WeiyuTheme.RADIUS_CARD)
         }
         .width('100%')
         .padding({ left: 20, right: 20 })
@@ -3003,7 +3086,7 @@ struct Index {
           })
 
           Column() {
-            this.buildPrimaryAction('寄给未来', '#97AEC3')
+            this.buildPrimaryAction('寄给未来', WeiyuTheme.COLOR_ACCENT)
           }
           .width('48%')
           .onClick(() => {
@@ -3048,7 +3131,10 @@ struct Index {
           }
           .width('100%')
           .padding({ top: 44, bottom: 32, left: 16, right: 16 })
-          .backgroundColor('#252B40')
+          .linearGradient({
+            angle: 150,
+            colors: [['#22293D', 0.0], ['#293149', 0.58], ['#242C42', 1.0]]
+          })
           .borderRadius(28)
         }
 
@@ -3056,68 +3142,69 @@ struct Index {
           Text(this.getActiveEcho().date)
             .fontSize(22)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#2E2721')
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
             .width('100%')
           Text(this.getActiveEcho().weekday)
             .fontSize(12)
-            .fontColor('#90867B')
+            .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
             .width('100%')
 
           Row({ space: 8 }) {
             Text('情绪：')
               .fontSize(13)
-              .fontColor('#7D746A')
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
             Text(this.getActiveEcho().emotion)
               .fontSize(13)
-              .fontColor('#4B423C')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             Text('方式：')
               .fontSize(13)
-              .fontColor('#7D746A')
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
             Text(this.getActiveEcho().ritual)
               .fontSize(13)
-              .fontColor('#4B423C')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
           }
           .width('100%')
 
           Text('关键词：' + this.getActiveEcho().keywords.join(' / '))
             .fontSize(13)
-            .fontColor('#7D746A')
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             .width('100%')
 
           Text(this.getActiveEcho().ritualHint)
             .fontSize(13)
             .lineHeight(20)
-            .fontColor('#7D746A')
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             .width('100%')
 
           if (this.getActiveEcho().ritual !== '燃成光点') {
             Text(this.getEchoContentLabel(this.getActiveEcho()))
               .fontSize(13)
-              .fontColor('#7D746A')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
               .width('100%')
 
             Text(this.getDisplayedContent(this.getActiveEcho()))
               .fontSize(17)
               .lineHeight(28)
-              .fontColor('#342C26')
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
               .width('100%')
 
             Text('温柔回声：')
               .fontSize(13)
-              .fontColor('#7D746A')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
               .width('100%')
 
             Text(this.getActiveEcho().echoLine)
               .fontSize(14)
               .lineHeight(22)
-              .fontColor('#6D645B')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
               .width('100%')
           }
 
         }
         .width('100%')
         .padding(20)
-        .backgroundColor('#FBF7F1')
+        .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+        .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
         .borderRadius(28)
 
         Column({ space: 12 }) {
@@ -3141,7 +3228,7 @@ struct Index {
                 this.getActiveEcho().ritual === '燃成光点'
                   ? (this.collectingSpark ? '正在点亮星空…' : (this.isSparkCollected(this.getActiveEcho().id) ? '已收下 · 去星空看看' : '收下这颗光点'))
                   : '保存回声卡',
-                '#9AAFC4'
+                WeiyuTheme.COLOR_ACCENT
               )
             }
             .onClick(() => {
@@ -3295,43 +3382,43 @@ struct Index {
           Column({ space: 12 }) {
             Text(`${item.date} · ${item.emotion}`)
               .fontSize(13)
-              .fontColor('#8E8174')
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
             Text(item.title.length > 0 ? item.title : '一颗没有名字的光')
               .fontSize(19)
-              .fontColor('#3B322A')
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
             Text(item.echoLine)
               .fontSize(16)
               .lineHeight(26)
-              .fontColor('#65594D')
-            Text('已收入星空 · 原文与照片不再保留')
-              .fontSize(12)
-              .fontColor('#9B9084')
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
           }
           .width('100%')
           .padding(22)
-          .backgroundColor('#FBF7F1')
-          .borderRadius(24)
+          .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+          .borderRadius(WeiyuTheme.RADIUS_CARD)
+          .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
         }, (item: LetterRecord) => `selected-${item.id}`)
 
         if (this.getPendingSparks().length > 0) {
           Text('还有微光，等你收下')
             .fontSize(16)
-            .fontColor('#66594E')
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             .width('100%')
           ForEach(this.getPendingSparks(), (item: LetterRecord) => {
             Row() {
               Text(`${item.date} · ${item.emotion}`)
                 .fontSize(14)
-                .fontColor('#75685C')
+                .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
               Blank()
               Text('去收下  ›')
                 .fontSize(14)
-                .fontColor('#A17F58')
+                .fontColor('#8B684D')
             }
             .width('100%')
             .padding(20)
             .backgroundColor('#F6ECDD')
             .borderRadius(20)
+            .border({ width: 1, color: '#E8D9C2' })
+            .hoverEffect(HoverEffect.Scale)
             .onClick(() => {
               this.enterEcho(item);
             })
@@ -3347,12 +3434,13 @@ struct Index {
   private buildDriftBottle(returned: boolean, large: boolean) {
     Stack({ alignContent: Alignment.Center }) {
       Image(this.getDriftHedgehogFrame())
-        .width(large ? 310 : 266)
-        .height(large ? 310 : 266)
+        .width(large ? 252 : 266)
+        .height(large ? 252 : 266)
         .objectFit(ImageFit.Contain)
+        .accessibilityText('小刺猬正划着小船，陪这封信慢慢漂流')
     }
     .width('100%')
-    .height(large ? 292 : 248)
+    .height(large ? 224 : 248)
     .rotate({ angle: (returned ? -1 : 0) + this.driftFloatAngle })
     .scale({ x: this.driftBottleScale, y: this.driftBottleScale })
     .translate({ x: this.driftBottleOffset, y: this.driftFloatY })
@@ -3361,108 +3449,141 @@ struct Index {
 
   @Builder
   private buildDriftSeaScene(record: LetterRecord, large: boolean) {
-    Column({ space: 4 }) {
+    Column({ space: 12 }) {
       Row() {
-        Text(this.getDriftStage(record))
-          .fontSize(11)
-          .letterSpacing(2)
-          .fontColor('#6C858A')
+        Row({ space: 8 }) {
+          Circle()
+            .width(6)
+            .height(6)
+            .fill(WeiyuTheme.COLOR_ACCENT)
+          Text(this.getDriftStage(record))
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+        }
         Blank()
         Text(this.getDriftAgeLabel(record))
-          .fontSize(11)
-          .fontColor('#8A9B9E')
+          .fontSize(12)
+          .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
       }
       .width('100%')
-      .padding({ left: 10, right: 10 })
+      .height(40)
+      .padding({ left: 14, right: 14 })
+      .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
+      .borderRadius(16)
 
       this.buildDriftBottle(this.isDriftReturned(record), large)
 
-      Text(this.getDriftJourneyLine(record))
-        .fontSize(large ? 18 : 15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#315B65')
-        .textAlign(TextAlign.Center)
-      Text(this.getDriftRemainingLabel(record))
-        .fontSize(11)
-        .fontColor('#607C82')
-        .textAlign(TextAlign.Center)
+      Column({ space: 6 }) {
+        Text(this.getDriftJourneyLine(record))
+          .fontSize(large ? 20 : 15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+          .textAlign(TextAlign.Center)
+        Text(this.getDriftRemainingLabel(record))
+          .fontSize(13)
+          .lineHeight(20)
+          .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
     }
     .width('100%')
-    .height(large ? 360 : 310)
-    .justifyContent(FlexAlign.SpaceBetween)
-    .padding({ top: 10, bottom: 10 })
+    .padding({ bottom: 2 })
+  }
+
+  @Builder
+  private buildDriftMoodOption(mood: string, index: number) {
+    Row({ space: 8 }) {
+      Text(mood)
+        .fontSize(14)
+        .fontWeight(this.driftMoodIndex === index ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.driftMoodIndex === index ? WeiyuTheme.COLOR_WHITE : WeiyuTheme.COLOR_TEXT_SECONDARY)
+      Blank()
+      if (this.driftMoodIndex === index) {
+        Text('已选')
+          .fontSize(11)
+          .fontColor('#EAF2F3')
+      }
+    }
+    .width(index === 4 ? '100%' : '48%')
+    .height(50)
+    .padding({ left: 16, right: 14 })
+    .margin({ bottom: 10 })
+    .backgroundColor(this.driftMoodIndex === index ? WeiyuTheme.COLOR_ACCENT_STRONG : WeiyuTheme.COLOR_ACCENT_SOFT)
+    .borderRadius(16)
+    .border({ width: 1, color: this.driftMoodIndex === index ? WeiyuTheme.COLOR_ACCENT_STRONG : '#D8E4E5' })
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(`此刻心情：${mood}${this.driftMoodIndex === index ? '，已选择' : ''}`)
+    .onClick(() => {
+      this.driftMoodIndex = index;
+      if (index !== 4) {
+        this.driftCustomMood = '';
+      }
+    })
   }
 
   @Builder
   private buildDriftLetterCard(record: LetterRecord) {
-    Column({ space: 16 }) {
+    Column({ space: 0 }) {
       Row() {
         Text(this.getDriftStage(record))
-          .fontSize(11)
-          .letterSpacing(1.5)
-          .fontColor('#52747D')
-          .padding({ left: 11, right: 11, top: 6, bottom: 6 })
-          .backgroundColor('#B8FFFFFF')
+          .fontSize(12)
+          .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+          .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+          .backgroundColor(WeiyuTheme.COLOR_SURFACE_MUTED)
           .borderRadius(14)
         Blank()
         Text(this.getDriftAgeLabel(record))
-          .fontSize(11)
-          .fontColor('#7A8D91')
+          .fontSize(12)
+          .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
       }
       .width('100%')
 
-      Row({ space: 18 }) {
-        Column({ space: 10 }) {
-          Text(record.title.trim().length > 0 ? record.title : '一封没有标题的漂流信')
-            .fontSize(19)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#304D54')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.getDriftJourneyLine(record))
-            .fontSize(13)
-            .lineHeight(21)
-            .fontColor('#657C81')
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-
-        Column() {
-          Text('✉')
-            .fontSize(42)
-            .fontColor('#507B86')
-        }
-        .width(76)
-        .height(76)
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .backgroundColor('#A8FFFFFF')
-        .borderRadius(24)
+      Column({ space: 8 }) {
+        Text(record.title.trim().length > 0 ? record.title : '一封没有标题的漂流信')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+          .lineHeight(26)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.getDriftJourneyLine(record))
+          .fontSize(14)
+          .lineHeight(22)
+          .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .margin({ top: 20, bottom: 18 })
 
       Divider()
         .strokeWidth(1)
-        .color('#75FFFFFF')
+        .color(WeiyuTheme.COLOR_BORDER)
+        .margin({ bottom: 14 })
 
       Row() {
         Text(`${record.date} · ${record.emotion}`)
           .fontSize(12)
-          .fontColor('#6C7F84')
+          .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
         Blank()
         Text(this.isDriftReturned(record) ? '已经靠岸  ›' : '靠近看看  ›')
           .fontSize(13)
-          .fontColor('#3F7481')
+          .fontWeight(FontWeight.Medium)
+          .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
       }
+      .height(24)
       .width('100%')
     }
     .width('100%')
     .padding(20)
-    .backgroundColor(this.getDriftCardBackground(record.emotion))
-    .borderRadius(26)
-    .shadow({ radius: 18, color: '#11000000', offsetX: 0, offsetY: 7 })
+    .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+    .borderRadius(WeiyuTheme.RADIUS_CARD)
+    .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+    .hoverEffect(HoverEffect.Scale)
+    .accessibilityText(`${record.title.trim().length > 0 ? record.title : '一封没有标题的漂流信'}，${this.getDriftAgeLabel(record)}`)
     .onClick(() => {
       this.enterEcho(record);
     })
@@ -3476,11 +3597,12 @@ struct Index {
         Column({ space: 6 }) {
           Text(`${this.driftLetters.length} 封漂流信`)
             .fontSize(26)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#315361')
-          Text(`${this.driftLetters.length} 封在海上 · 都可以随时捞起`)
-            .fontSize(13)
-            .fontColor('#6B8A94')
+            .fontWeight(FontWeight.Medium)
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+          Text('它们都在海上，想靠近时随时可以捞起。')
+            .fontSize(14)
+            .lineHeight(22)
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
@@ -3501,157 +3623,249 @@ struct Index {
   @Builder
   private buildDriftDetail() {
     Scroll() {
-      Column({ space: 18 }) {
+      Column({ space: 20 }) {
         this.buildBackHeader(this.isDriftReturned(this.getActiveEcho()) ? '漂流信回到了岸边' : '去看看漂流中的它', '')
-        this.buildDriftSeaScene(this.getActiveEcho(), true)
 
-        if (this.initialDriftReceipt) {
-          Column() {
-            this.buildPrimaryAction('保存回声卡', '#608FA0')
-          }
-          .onClick(() => {
-            this.initialDriftReceipt = false;
-            this.homeTab = 1;
-            this.currentPage = 'home';
-            this.statusText = '回声卡已经保存到回声里了。';
-          })
-        } else {
-          if (this.driftPeek) {
-            Column({ space: 14 }) {
-            Row() {
-              Text('瓶中那封信')
-                .fontSize(17)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#3E575D')
-              Blank()
-              Text('轻触收起')
+        Column({ space: 16 }) {
+          this.buildDriftSeaScene(this.getActiveEcho(), true)
+
+          if (this.initialDriftReceipt) {
+            Column() {
+              this.buildPrimaryAction('保存这张漂流回声卡', WeiyuTheme.COLOR_ACCENT_STRONG)
+            }
+            .onClick(() => {
+              this.initialDriftReceipt = false;
+              this.homeTab = 1;
+              this.currentPage = 'home';
+              this.statusText = '回声卡已经保存到回声里了。';
+            })
+          } else if (!this.driftPeek) {
+            Column({ space: 10 }) {
+              Column() {
+                this.buildPrimaryAction('捞起来看看', WeiyuTheme.COLOR_ACCENT_STRONG)
+              }
+              .onClick(() => {
+                this.driftPeek = true;
+              })
+              Text('只是靠近读一读，不会结束漂流，也不会改变原信。')
                 .fontSize(12)
-                .fontColor('#75909A')
+                .lineHeight(18)
+                .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+                .width('100%')
+                .textAlign(TextAlign.Center)
             }
             .width('100%')
-            Text(this.getActiveEcho().title.trim().length > 0 ? this.getActiveEcho().title : '一封没有标题的信')
-              .fontSize(16)
-              .fontColor('#52676C')
-            Text(this.getActiveEcho().content)
-              .fontSize(16)
-              .lineHeight(27)
-              .fontColor('#37474B')
-            ForEach(this.getActiveEcho().photoUris, (uri: string) => {
-              Image(uri)
-                .width('100%')
-                .height(190)
-                .objectFit(ImageFit.Cover)
-                .borderRadius(16)
-            }, (uri: string) => uri)
+          } else {
+            Row({ space: 8 }) {
+              Circle()
+                .width(6)
+                .height(6)
+                .fill(WeiyuTheme.COLOR_ACCENT)
+              Text('信已经展开，轻触下方信纸可以收起')
+                .fontSize(12)
+                .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+            }
+            .height(40)
+            .padding({ left: 14, right: 14 })
+            .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
+            .borderRadius(16)
           }
-          .width('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding(22)
-          .backgroundColor('#FCFAF5')
-          .borderRadius(24)
-          .onClick(() => {
-            this.driftPeek = false;
-          })
-        } else {
-          Column() {
-            this.buildPrimaryAction('捞起来看看', '#608FA0')
-          }
-          .onClick(() => {
-            this.driftPeek = true;
-          })
-          Text('打开看看不会结束漂流，也不会改变原信。')
-            .fontSize(12)
-            .fontColor('#82969C')
-            .width('100%')
-            .textAlign(TextAlign.Center)
-        }
-
-        Text('此刻的你，感觉怎样？')
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#3E575D')
-          .width('100%')
-        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-          ForEach(['轻松些了', '仍有点难过', '平静了', '还说不清', '其他'], (mood: string, index: number) => {
-            Text(mood)
-            .fontSize(13)
-              .fontColor(this.driftMoodIndex === index ? '#FFFFFF' : '#507580')
-              .width('48%')
-              .textAlign(TextAlign.Center)
-              .padding({ top: 13, bottom: 13 })
-              .margin({ bottom: 10 })
-              .backgroundColor(this.driftMoodIndex === index ? '#608FA0' : '#E4EFF0')
-              .borderRadius(16)
-            .onClick(() => {
-                this.driftMoodIndex = index;
-                if (index !== 4) {
-                  this.driftCustomMood = '';
-                }
-              })
-          }, (mood: string) => mood)
-        }
-        if (this.driftMoodIndex === 4) {
-          Column({ space: 2 }) {
-            TextInput({ text: this.driftCustomMood, placeholder: '写下此刻更贴切的感觉' })
-              .width('100%')
-              .height(44)
-              .fontSize(14)
-              .fontColor('#3E575D')
-              .placeholderColor('#96A8A9')
-              .backgroundColor('#00FFFFFF')
-              .padding({ left: 2, right: 2 })
-              .maxLength(18)
-              .onChange((value: string) => {
-                this.driftCustomMood = value;
-              })
-            Divider()
-              .strokeWidth(1)
-              .color('#8DA9AD')
-          }
-          .width('100%')
-          .padding({ left: 4, right: 4, bottom: 6 })
-        }
-        Row() {
-          Blank()
-          Text(this.hasCurrentDriftMood() ? '把这封信带回岸边' : '先选此刻的心情')
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#FFFFFF')
-          Blank()
         }
         .width('100%')
-        .padding({ top: 14, bottom: 14 })
-        .backgroundColor(this.hasCurrentDriftMood() ? '#608FA0' : '#AFC6CC')
-        .borderRadius(18)
-        .onClick(() => {
-          if (this.hasCurrentDriftMood()) {
-            this.recallDriftLetter(this.getActiveEcho());
-          } else {
-            this.statusText = this.driftMoodIndex === 4 ? '写下此刻的感觉，再把信带回岸边。' : '先选一个此刻的心情，再把信带回岸边。';
+        .padding(18)
+        .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+        .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+        .borderRadius(WeiyuTheme.RADIUS_HERO)
+
+        if (!this.initialDriftReceipt) {
+          if (this.driftPeek) {
+            Column({ space: 14 }) {
+              Row() {
+                Column({ space: 3 }) {
+                  Text('瓶中那封信')
+                    .fontSize(17)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+                  Text('读完以后，它仍会留在海上')
+                    .fontSize(12)
+                    .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+                }
+                .alignItems(HorizontalAlign.Start)
+                Blank()
+                Text('收起')
+                  .fontSize(12)
+                  .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+              }
+              .width('100%')
+              Text(this.getActiveEcho().title.trim().length > 0 ? this.getActiveEcho().title : '一封没有标题的信')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+              Text(this.getActiveEcho().content)
+                .fontSize(16)
+                .lineHeight(27)
+                .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              ForEach(this.getActiveEcho().photoUris, (uri: string) => {
+                Image(uri)
+                  .width('100%')
+                  .height(190)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(16)
+              }, (uri: string) => uri)
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+            .padding(22)
+            .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+            .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+            .borderRadius(WeiyuTheme.RADIUS_CARD)
+            .hoverEffect(HoverEffect.Scale)
+            .accessibilityText('已经展开的漂流信，轻触收起')
+            .onClick(() => {
+              this.driftPeek = false;
+            })
           }
-        })
-        Text('捡回时会保留正文、照片和这次心情的变化。')
-          .fontSize(12)
-          .fontColor('#82969C')
+
+          Column({ space: 16 }) {
+            Column({ space: 6 }) {
+              Text('此刻的你，感觉怎样？')
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              Text('不用急着变好，只选最接近此刻的一种。')
+                .fontSize(13)
+                .lineHeight(20)
+                .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+              ForEach(['轻松些了', '仍有点难过', '平静了', '还说不清', '其他'], (mood: string, index: number) => {
+                this.buildDriftMoodOption(mood, index)
+              }, (mood: string) => mood)
+            }
+
+            if (this.driftMoodIndex === 4) {
+              Column({ space: 4 }) {
+                Text('把更贴切的感觉写下来')
+                  .fontSize(12)
+                  .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+                  .width('100%')
+                TextInput({ text: this.driftCustomMood, placeholder: '例如：终于能轻轻放下一点了' })
+                  .width('100%')
+                  .height(48)
+                  .fontSize(14)
+                  .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+                  .placeholderColor(WeiyuTheme.COLOR_TEXT_MUTED)
+                  .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+                  .border({ width: 1, color: '#D8E4E5' })
+                  .borderRadius(14)
+                  .padding({ left: 14, right: 14 })
+                  .maxLength(18)
+                  .onChange((value: string) => {
+                    this.driftCustomMood = value;
+                  })
+              }
+              .width('100%')
+            }
+
+            Row() {
+              Blank()
+              Text(this.hasCurrentDriftMood() ? '把这封信带回岸边' : '选择一种感受，再带它回岸')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.hasCurrentDriftMood() ? WeiyuTheme.COLOR_WHITE : WeiyuTheme.COLOR_ACCENT_STRONG)
+              Blank()
+            }
+            .width('100%')
+            .height(52)
+            .backgroundColor(this.hasCurrentDriftMood() ? WeiyuTheme.COLOR_ACCENT_STRONG : WeiyuTheme.COLOR_ACCENT_SOFT)
+            .border({ width: 1, color: this.hasCurrentDriftMood() ? WeiyuTheme.COLOR_ACCENT_STRONG : '#D8E4E5' })
+            .borderRadius(WeiyuTheme.RADIUS_CONTROL)
+            .hoverEffect(HoverEffect.Scale)
+            .accessibilityText(this.hasCurrentDriftMood() ? '把这封信带回岸边' : '请先选择此刻的心情')
+            .onClick(() => {
+              if (this.hasCurrentDriftMood()) {
+                this.recallDriftLetter(this.getActiveEcho());
+              } else {
+                this.statusText = this.driftMoodIndex === 4 ? '写下此刻的感觉，再把信带回岸边。' : '先选一个此刻的心情，再把信带回岸边。';
+              }
+            })
+
+            Text('带回时会保留正文、照片，也会记住这一次心情的变化。')
+              .fontSize(12)
+              .lineHeight(18)
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          }
           .width('100%')
-          .textAlign(TextAlign.Center)
-        Column() {
-          this.buildSecondaryAction(this.isDriftReturned(this.getActiveEcho()) ? '再次放回远海' : '先让它继续漂流')
-        }
-        .onClick(() => {
-          if (this.isDriftReturned(this.getActiveEcho())) {
-            this.continueDrift(this.getActiveEcho());
-          } else {
-            this.currentPage = 'driftSea';
-          }
-        })
-        Text('燃成光点 · 永久放下')
-          .fontSize(13)
-          .fontColor('#9A8279')
-          .padding({ top: 12, bottom: 12 })
+          .padding(20)
+          .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+          .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+          .borderRadius(WeiyuTheme.RADIUS_CARD)
+
+          Column({ space: 12 }) {
+            Column({ space: 4 }) {
+              Text('还想怎么安放它？')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              Text('如果还没准备好面对，就让海风再替你保管一会儿。')
+                .fontSize(12)
+                .lineHeight(18)
+                .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+
+            Column() {
+              this.buildSecondaryAction(this.isDriftReturned(this.getActiveEcho()) ? '再次放回远海' : '先让它继续漂流')
+            }
+            .onClick(() => {
+              if (this.isDriftReturned(this.getActiveEcho())) {
+                this.continueDrift(this.getActiveEcho());
+              } else {
+                this.currentPage = 'driftSea';
+              }
+            })
+
+            Divider()
+              .strokeWidth(1)
+              .color(WeiyuTheme.COLOR_BORDER)
+              .margin({ top: 4 })
+
+            Row({ space: 12 }) {
+              Column({ space: 3 }) {
+                Text('让它化成一束光')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(WeiyuTheme.COLOR_DANGER)
+                Text('永久清除正文与照片，只留下余光')
+                  .fontSize(12)
+                  .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+              }
+              .alignItems(HorizontalAlign.Start)
+              Blank()
+              Text('›')
+                .fontSize(22)
+                .fontColor(WeiyuTheme.COLOR_DANGER)
+            }
+            .width('100%')
+            .height(58)
+            .padding({ left: 4, right: 4 })
+            .hoverEffect(HoverEffect.Scale)
+            .accessibilityText('让它化成一束光，永久清除正文与照片')
             .onClick(() => {
               this.currentPage = 'driftSparkConfirm';
             })
+          }
+          .width('100%')
+          .padding(20)
+          .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+          .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+          .borderRadius(WeiyuTheme.RADIUS_CARD)
         }
       }
       .width('100%')
@@ -3659,7 +3873,13 @@ struct Index {
       .opacity(this.driftDetailEntryOpacity)
       .translate({ x: 0, y: this.driftDetailEntryOffset })
       .onAppear(() => {
+        this.startDriftMotion();
+        this.startDriftHedgehogAnimation();
         this.playDriftDetailEntryAnimation();
+      })
+      .onDisAppear(() => {
+        this.stopDriftMotion();
+        this.stopDriftHedgehogAnimation();
       })
     }
   }
@@ -3670,25 +3890,36 @@ struct Index {
       Column({ space: 18 }) {
         this.buildBackHeader('让它化成光点？', '这一步不能撤回。')
         Column({ space: 16 }) {
-          Text('✦')
-            .fontSize(58)
-            .fontColor('#D8AB80')
+          Stack({ alignContent: Alignment.Center }) {
+            Circle()
+              .width(58)
+              .height(58)
+              .fill('#D8AB80')
+              .opacity(0.12)
+            Circle()
+              .width(20)
+              .height(20)
+              .fill('#D8AB80')
+          }
+          .width(70)
+          .height(70)
           Text('漂流结束，留下这一点光')
             .fontSize(21)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#3C3531')
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
           Text('确认后，信的正文与照片会被永久清除。日期、情绪和温柔回声会留下，你可以把光点收入星空。')
             .fontSize(14)
             .lineHeight(24)
-            .fontColor('#7D746A')
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
             .textAlign(TextAlign.Center)
         }
         .width('100%')
         .padding(27)
-        .backgroundColor('#FBF7F1')
+        .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+        .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
         .borderRadius(28)
         Column() {
-          this.buildPrimaryAction('确认化成光点', '#C99B72')
+          this.buildPrimaryAction('确认化成光点', '#B98963')
         }
         .onClick(() => {
           this.convertDriftToSpark(this.getActiveEcho());
@@ -3719,12 +3950,12 @@ struct Index {
                 Text(item.date)
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#352D27')
+                  .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
                 Blank()
                 Stack({ alignContent: Alignment.TopEnd }) {
                   Text(this.getRecordStatusLabel(item))
                     .fontSize(12)
-                    .fontColor('#7A7065')
+                    .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
                     .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                     .backgroundColor(this.getRecordStatusBackground(item))
                     .borderRadius(12)
@@ -3763,13 +3994,13 @@ struct Index {
 
               Text(`${item.recipient} · ${item.emotion}`)
                 .fontSize(12)
-                .fontColor('#8E847A')
+                .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
                 .width('100%')
 
               Text(this.getArchiveDisplayText(item))
                 .fontSize(15)
                 .lineHeight(24)
-                .fontColor('#4D433C')
+                .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
                 .maxLines(3)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')
@@ -3806,8 +4037,10 @@ struct Index {
             }
             .width('100%')
             .padding(18)
-            .backgroundColor('#FBF7F1')
-            .borderRadius(22)
+            .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+            .borderRadius(WeiyuTheme.RADIUS_CARD)
+            .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+            .hoverEffect(HoverEffect.Scale)
             .onClick(() => {
               if (this.archiveKind === 'draft') {
                 this.continueDraft(item);
@@ -3824,56 +4057,64 @@ struct Index {
   }
 
   @Builder
-  private buildBottomBar() {
-    Row() {
-      Column({ space: 6 }) {
-        Text('⌂')
-          .fontSize(18)
-          .fontColor(this.homeTab === 0 ? '#6E8EA9' : '#938A80')
-        Text('信箱')
-          .fontSize(11)
-          .fontColor(this.homeTab === 0 ? '#6E8EA9' : '#938A80')
-      }
-      .width('33.33%')
-      .padding({ top: 6, bottom: 6 })
-      .onClick(() => {
-        this.homeTab = 0;
-        this.currentPage = 'home';
-      })
-
-      Column({ space: 6 }) {
-        Text('◍')
-          .fontSize(18)
-          .fontColor(this.homeTab === 1 ? '#6E8EA9' : '#938A80')
-        Text('回声')
-          .fontSize(11)
-          .fontColor(this.homeTab === 1 ? '#6E8EA9' : '#938A80')
-      }
-      .width('33.33%')
-      .padding({ top: 6, bottom: 6 })
-      .onClick(() => {
-        this.homeTab = 1;
-        this.currentPage = 'home';
-      })
-
-      Column({ space: 6 }) {
-        Text('◌')
-          .fontSize(18)
-          .fontColor(this.homeTab === 2 ? '#6E8EA9' : '#938A80')
-        Text('我的')
-          .fontSize(11)
-          .fontColor(this.homeTab === 2 ? '#6E8EA9' : '#938A80')
-      }
-      .width('33.33%')
-      .padding({ top: 6, bottom: 6 })
-      .onClick(() => {
-        this.homeTab = 2;
-        this.currentPage = 'home';
-      })
+  private buildBottomTab(icon: string, label: string, index: number) {
+    Column() {
+      Text(icon)
+        .fontSize(19)
+        .lineHeight(22)
+        .height(24)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.homeTab === index ? WeiyuTheme.COLOR_ACCENT_STRONG : WeiyuTheme.COLOR_TEXT_MUTED)
+      Text(label)
+        .fontSize(12)
+        .lineHeight(18)
+        .height(20)
+        .width('100%')
+        .maxLines(1)
+        .textAlign(TextAlign.Center)
+        .fontWeight(this.homeTab === index ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.homeTab === index ? WeiyuTheme.COLOR_ACCENT_STRONG : WeiyuTheme.COLOR_TEXT_MUTED)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 10, bottom: 18 })
-    .backgroundColor('#FFFDFC')
+    .height(60)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor(this.homeTab === index ? WeiyuTheme.COLOR_ACCENT_SOFT : '#00FFFFFF')
+    .borderRadius(18)
+    .accessibilityText(label)
+    .onClick(() => {
+      this.homeTab = index;
+      this.currentPage = 'home';
+    })
+  }
+
+  @Builder
+  private buildBottomBar() {
+    Row({ space: 8 }) {
+      Column() {
+        this.buildBottomTab('⌂', '信箱', 0)
+      }
+      .layoutWeight(1)
+      .height(60)
+      Column() {
+        this.buildBottomTab('◉', '回声', 1)
+      }
+      .layoutWeight(1)
+      .height(60)
+      Column() {
+        this.buildBottomTab('○', '我的', 2)
+      }
+      .layoutWeight(1)
+      .height(60)
+    }
+    .width('100%')
+    .height(60)
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 16, right: 16, top: 8, bottom: 14 })
+    .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+    .border({ width: { top: 1 }, color: WeiyuTheme.COLOR_BORDER })
   }
 
   build() {
@@ -3909,7 +4150,7 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#F7F3EE')
+      .backgroundColor(WeiyuTheme.COLOR_BACKGROUND)
 
       if (this.currentPage === 'home') {
         this.buildBottomBar()

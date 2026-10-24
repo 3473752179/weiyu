@@ -1,3 +1,5 @@
+import { WeiyuTheme } from '../../theme/WeiyuTheme';
+
 let cardStorage: LocalStorage = new LocalStorage();
 
 @Entry(cardStorage)
@@ -23,11 +25,11 @@ struct LetterCard {
             Text(this.date)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#51483F')
+              .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
             Blank()
             Text(this.hasLetter ? this.emotionAndRitual : '写一封信')
               .fontSize(11)
-              .fontColor('#8C8176')
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
           }
           .width('100%')
 
@@ -35,7 +37,7 @@ struct LetterCard {
             .fontSize(this.hasLetter ? 16 : 18)
             .fontWeight(this.hasLetter ? FontWeight.Regular : FontWeight.Medium)
             .lineHeight(25)
-            .fontColor('#342C26')
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -44,7 +46,7 @@ struct LetterCard {
 
           Text(this.hasLetter ? '打开这封信  ›' : '现在写一点  ✎')
             .fontSize(12)
-            .fontColor('#6E8EA9')
+            .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
             .width('100%')
         }
         .width('100%')
@@ -59,8 +61,9 @@ struct LetterCard {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#FBF7F1')
-      .borderRadius(24)
+      .backgroundColor(WeiyuTheme.COLOR_SURFACE_WARM)
+      .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+      .borderRadius(WeiyuTheme.RADIUS_CARD)
     }
     .width('100%')
     .height('100%')
