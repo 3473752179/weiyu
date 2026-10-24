@@ -211,6 +211,7 @@ struct Index {
   @State private unlockWatcherNow: number = Date.now();
   private unlockWatcherTimer: number = -1;
   @State private isPendingSave: boolean = false;
+  @State private pendingRecord: LetterRecord | undefined = undefined;
 
   aboutToAppear(): void {
     if (BuildProfile.DEBUG) {
@@ -425,13 +426,10 @@ struct Index {
   }
 
   private discardPendingRecord(): void {
-    if (!this.isPendingSave || this.activeEchoId === -1) {
+    if (!this.isPendingSave) {
       return;
     }
-    const targetId: number = this.activeEchoId;
-    this.sealedLetters = this.sealedLetters.filter((item: LetterRecord) => item.id !== targetId);
-    this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== targetId);
-    this.echoCards = this.echoCards.filter((item: LetterRecord) => item.id !== targetId);
+    this.pendingRecord = undefined;
     this.isPendingSave = false;
   }
 
@@ -973,6 +971,9 @@ struct Index {
   }
 
   private getActiveEcho(): LetterRecord {
+    if (this.pendingRecord && this.pendingRecord.id === this.activeEchoId) {
+      return this.pendingRecord;
+    }
     let index: number = 0;
     while (index < this.echoCards.length) {
       if (this.echoCards[index].id === this.activeEchoId) {
@@ -1704,7 +1705,6 @@ struct Index {
     let record: LetterRecord = this.createRecord(ritual.title, ritual.subtitle);
 
     if (ritual.id === 'seal') {
-      this.sealedLetters = [record, ...this.sealedLetters];
       this.statusText = '这封信已经被封存在时光盒里了。';
     } else if (ritual.id === 'drift') {
       record = {
@@ -1731,7 +1731,6 @@ struct Index {
         driftTideAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
         driftMoodNow: ''
       };
-      this.driftLetters = [record, ...this.driftLetters];
       this.statusText = '漂流信已经离岸，小刺猬会陪它慢慢划远。';
     } else if (ritual.id === 'spark') {
       record = {
@@ -1759,15 +1758,16 @@ struct Index {
         photoUris: [],
         driftStartedAt: 0
       };
+      this.echoCards = [record, ...this.echoCards];
       this.statusText = '这封信已经化成光点，只留下短短一束回声。';
     }
 
-    this.echoCards = [record, ...this.echoCards];
     this.activeEchoId = record.id;
     this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== originalContent);
     
     if (ritual.id === 'seal' || ritual.id === 'drift') {
       this.isPendingSave = true;
+      this.pendingRecord = record;
     } else {
       this.persistLetters();
     }
@@ -4084,7 +4084,15 @@ struct Index {
                 this.collectActiveSpark();
                 return;
               }
-              this.isPendingSave = false;
+              if (this.isPendingSave && this.pendingRecord) {
+                const record: LetterRecord = this.pendingRecord;
+                if (record.ritual === '封存') {
+                  this.sealedLetters = [record, ...this.sealedLetters];
+                  this.echoCards = [record, ...this.echoCards];
+                }
+                this.pendingRecord = undefined;
+                this.isPendingSave = false;
+              }
               this.persistLetters();
               this.showHomeTab(1);
               this.statusText = '回声卡已经留在你的信箱里。';
@@ -4488,7 +4496,15 @@ struct Index {
             }
             .onClick(() => {
               this.initialDriftReceipt = false;
-              this.isPendingSave = false;
+              if (this.isPendingSave && this.pendingRecord) {
+                const record: LetterRecord = this.pendingRecord;
+                if (record.ritual === '漂流') {
+                  this.driftLetters = [record, ...this.driftLetters];
+                  this.echoCards = [record, ...this.echoCards];
+                }
+                this.pendingRecord = undefined;
+                this.isPendingSave = false;
+              }
               this.persistLetters();
               this.showHomeTab(1);
               this.statusText = '回声卡已经保存到回声里了。';
