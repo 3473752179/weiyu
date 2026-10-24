@@ -116,7 +116,7 @@ struct Index {
   @State private collectedSparkIds: Array<number> = [];
   @State private selectedSparkId: number = -1;
   @State private selectedSparkGlowScale: number = 1;
-  @State private selectedSparkGlowOpacity: number = 0.42;
+  @State private selectedSparkGlowOpacity: number = 0.44;
   @State private collectingSpark: boolean = false;
   @State private sparkScale: number = 1;
   @State private sparkOpacity: number = 1;
@@ -1409,22 +1409,37 @@ struct Index {
     }
   }
 
+  private getSparkVisualSize(index: number): number {
+    const sizes: number[] = [12, 17, 14, 20, 13, 16];
+    return sizes[index % sizes.length];
+  }
+
+  private getSparkVisualOpacity(index: number): number {
+    const opacities: number[] = [0.68, 0.9, 0.76, 1, 0.72, 0.84];
+    return opacities[index % opacities.length];
+  }
+
+  private getSparkVisualOffset(index: number): number {
+    const offsets: number[] = [-8, 7, -2, 11, 3, -6];
+    return offsets[index % offsets.length];
+  }
+
   private glowSelectedSpark(id: number): void {
     this.selectedSparkId = id;
-    this.selectedSparkGlowScale = 0.92;
-    this.selectedSparkGlowOpacity = 0.32;
+    this.selectedSparkGlowScale = 0.96;
+    this.selectedSparkGlowOpacity = 0.34;
     animateTo({
-      duration: 260,
+      duration: 220,
       curve: Curve.EaseOut,
       onFinish: () => {
-        animateTo({ duration: 620, curve: Curve.EaseInOut }, () => {
+        animateTo({ duration: 520, curve: Curve.EaseInOut }, () => {
           this.selectedSparkGlowScale = 1;
-          this.selectedSparkGlowOpacity = 0.42;
+          this.selectedSparkGlowOpacity = 0.44;
         });
       }
     }, () => {
-      this.selectedSparkGlowScale = 1.34;
-      this.selectedSparkGlowOpacity = 0.7;
+      this.selectedSparkGlowScale = 1.18;
+      this.selectedSparkGlowOpacity = 0.58;
     });
   }
 
@@ -3161,67 +3176,119 @@ struct Index {
     Scroll() {
       Column({ space: 20 }) {
         this.buildBackHeader('光点星空', '那些放下的心事，成了陪伴你的光。')
-        Column({ space: 16 }) {
-          Text('属于你的微光')
-            .fontSize(14)
-            .fontColor('#C8C2C0')
-          Text(`${this.getCollectedSparks().length} 颗心事，已化作星光`)
-            .fontSize(22)
-            .fontColor('#F6ECDD')
+        Column({ space: 0 }) {
+          Column({ space: 10 }) {
+            Text('属于你的微光')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#E8E5DE')
+              .width('100%')
+            Row({ space: 7 }) {
+              Text(`${this.getCollectedSparks().length}`)
+                .fontSize(30)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#F7F0E3')
+              Text('颗心事，已化作星光')
+                .fontSize(14)
+                .fontColor('#B8BECD')
+                .margin({ bottom: 3 })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Bottom)
+            Text('它们不再讲述原来的故事，只安静留下那一刻的心情。')
+              .fontSize(12)
+              .lineHeight(19)
+              .fontColor('#8F97AD')
+              .width('100%')
+          }
+          .width('100%')
+          .padding({ left: 8, right: 8, bottom: 20 })
+
           if (this.getCollectedSparks().length === 0) {
-            Text('✧')
-              .fontSize(58)
-              .fontColor('#D8C7A1')
-              .margin({ top: 28, bottom: 12 })
+            Stack({ alignContent: Alignment.Center }) {
+              Circle()
+                .width(44)
+                .height(44)
+                .fill('#D8C7A1')
+                .opacity(0.08)
+              Circle()
+                .width(12)
+                .height(12)
+                .fill('#D8C7A1')
+                .opacity(0.82)
+            }
+            .width(52)
+            .height(52)
+            .margin({ top: 34, bottom: 16 })
             Text('星空还在等第一束光\n收下一颗光点，它就会在这里亮起。')
               .fontSize(14)
-              .lineHeight(24)
+              .lineHeight(23)
               .textAlign(TextAlign.Center)
-              .fontColor('#B7B8C7')
+              .fontColor('#B9BFCE')
           } else {
             Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
               ForEach(this.getCollectedSparks(), (item: LetterRecord, index: number) => {
-                Column({ space: 14 }) {
+                Column({ space: 12 }) {
                   Stack({ alignContent: Alignment.Center }) {
                     if (this.selectedSparkId === item.id) {
                       Circle()
-                        .width(34)
-                        .height(34)
+                        .width(44)
+                        .height(44)
                         .fill(this.getSparkColor(item.emotion))
-                        .opacity(this.selectedSparkGlowOpacity * 0.3)
+                        .opacity(this.selectedSparkGlowOpacity * 0.18)
+                        .scale({ x: this.selectedSparkGlowScale, y: this.selectedSparkGlowScale })
+                      Circle()
+                        .width(30)
+                        .height(30)
+                        .fill(this.getSparkColor(item.emotion))
+                        .opacity(this.selectedSparkGlowOpacity * 0.34)
                         .scale({ x: this.selectedSparkGlowScale, y: this.selectedSparkGlowScale })
                     }
                     Circle()
-                      .width(this.selectedSparkId === item.id ? 20 : 14)
-                      .height(this.selectedSparkId === item.id ? 20 : 14)
+                      .width(this.selectedSparkId === item.id ? 21 : this.getSparkVisualSize(index))
+                      .height(this.selectedSparkId === item.id ? 21 : this.getSparkVisualSize(index))
                       .fill(this.getSparkColor(item.emotion))
-                      .borderRadius(50)
+                      .opacity(this.selectedSparkId === item.id ? 1 : this.getSparkVisualOpacity(index))
                   }
-                  .width(46)
-                  .height(46)
-                  Text(this.selectedSparkId === item.id ? '✧ 这一束光' : item.emotion)
-                    .fontSize(11)
-                    .fontColor(this.selectedSparkId === item.id ? '#F6ECDD' : '#ADAFC1')
+                  .width(48)
+                  .height(48)
+                  Text(this.selectedSparkId === item.id ? '这一束光' : item.emotion)
+                    .fontSize(12)
+                    .fontWeight(this.selectedSparkId === item.id ? FontWeight.Medium : FontWeight.Regular)
+                    .fontColor(this.selectedSparkId === item.id ? '#EEE9DE' : '#B3B9C9')
                 }
                 .width('25%')
-                .height(112)
+                .height(108)
                 .justifyContent(FlexAlign.Center)
-                .translate({ y: index % 2 === 0 ? -6 : 8 })
+                .translate({ y: this.getSparkVisualOffset(index) })
                 .onClick(() => {
                   this.glowSelectedSpark(item.id);
                 })
               }, (item: LetterRecord) => `star-${item.id}`)
             }
             .width('100%')
-            .padding({ top: 16, bottom: 16 })
-            Text('轻触一束光，看看当时的自己')
-              .fontSize(12)
-              .fontColor('#A6A8BB')
+            .padding({ top: 12, bottom: 22 })
+
+            Column({ space: 5 }) {
+              Text('轻触一束光')
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#D1D5E0')
+              Text('看看它曾经承接的心情')
+                .fontSize(12)
+                .fontColor('#A2A9BA')
+            }
+            .width('100%')
+            .padding({ top: 13, bottom: 3 })
+            .border({ width: { top: 1 }, color: '#343C54' })
           }
         }
         .width('100%')
-        .padding({ top: 28, bottom: 30, left: 16, right: 16 })
-        .backgroundColor('#252B40')
+        .padding({ top: 30, bottom: 26, left: 16, right: 16 })
+        .linearGradient({
+          angle: 155,
+          colors: [['#20263A', 0.0], ['#293149', 0.54], ['#222A40', 1.0]]
+        })
         .borderRadius(28)
 
         ForEach(this.getCollectedSparks().filter((item: LetterRecord) => item.id === this.selectedSparkId), (item: LetterRecord) => {
