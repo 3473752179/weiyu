@@ -35,6 +35,8 @@ interface LetterRecord {
   reminderId: number;
   photoUris: Array<string>;
   driftStartedAt: number;
+  driftTideAt?: number;
+  driftMoodNow?: string;
 }
 
 interface StoredLetterState {
@@ -45,6 +47,7 @@ interface StoredLetterState {
   echoCards: Array<LetterRecord>;
   nextId: number;
   activeEchoId: number;
+  collectedSparkIds: Array<number>;
 }
 
 interface ServiceCardData {
@@ -78,7 +81,7 @@ struct Index {
   private readonly ritualOptions: Array<SelectItem> = [
     { id: 'seal', title: '封存', subtitle: '把信放进时光盒，让它暂时被照顾', emoji: '📦', color: '#F4EDE4' },
     { id: 'spark', title: '燃成光点', subtitle: '让文字化成星光，轻轻照亮情绪', emoji: '✨', color: '#F9ECD8' },
-    { id: 'drift', title: '漂流', subtitle: '把信放入云朵，让它随风慢慢漂走', emoji: '☁️', color: '#EAF0F6' },
+    { id: 'drift', title: '漂流', subtitle: '把信交给海风，想看时随时捞起', emoji: '🌊', color: '#EAF0F6' },
     { id: 'future', title: '寄给未来', subtitle: '把愿望留给未来的自己开启', emoji: '🗓', color: '#F4EEE4' }
   ];
   private readonly letterStoreName: string = 'weiyu_letter_store';
@@ -89,9 +92,12 @@ struct Index {
   @State private currentPage: string = 'home';
   @StorageLink('cardTarget') @Watch('onCardTargetChanged') private cardTarget: string = '';
   @State private homeTab: number = 0;
+  @State private echoTimeFilter: string = 'all';
   @State private archiveKind: string = 'draft';
   @State private selectedRecipientIndex: number = -1;
   @State private selectedEmotionIndex: number = -1;
+  @State private customRecipient: string = '';
+  @State private customEmotion: string = '';
   @State private emotionConfirmLabel: string = '是什么呢';
   @State private letterTitle: string = '';
   @State private letterContent: string = '';
@@ -107,6 +113,31 @@ struct Index {
   @State private driftLetters: Array<LetterRecord> = [];
   @State private echoCards: Array<LetterRecord> = [];
   @State private activeEchoId: number = 2;
+  @State private collectedSparkIds: Array<number> = [];
+  @State private selectedSparkId: number = -1;
+  @State private selectedSparkGlowScale: number = 1;
+  @State private selectedSparkGlowOpacity: number = 0.42;
+  @State private collectingSpark: boolean = false;
+  @State private sparkScale: number = 1;
+  @State private sparkOpacity: number = 1;
+  @State private driftPeek: boolean = false;
+  @State private driftMoodIndex: number = -1;
+  @State private driftCustomMood: string = '';
+  @State private driftDetailEntryOffset: number = 18;
+  @State private driftDetailEntryOpacity: number = 0;
+  @State private initialDriftReceipt: boolean = false;
+  @State private driftLaunching: boolean = false;
+  @State private driftBottleOffset: number = 0;
+  @State private driftBottleScale: number = 1;
+  @State private driftBottleOpacity: number = 1;
+  @State private driftReflection: string = '';
+  @State private writingReturnPage: string = 'emotion';
+  private recalledDriftOrigin: LetterRecord | undefined = undefined;
+  @State private driftFloatY: number = 4;
+  @State private driftFloatAngle: number = 2;
+  private driftMotionTimer: number = -1;
+  @State private driftHedgehogFrameIndex: number = 0;
+  private driftHedgehogFrameTimer: number = -1;
   @State private openedMenuId: number = -1;
   @State private homeEntryOffset: number = 18;
   @State private homeEntryOpacity: number = 0;
@@ -135,6 +166,8 @@ struct Index {
 
   aboutToAppear(): void {
     this.startUnlockWatcher();
+    this.startDriftMotion();
+    this.startDriftHedgehogAnimation();
     this.refreshNotificationPermissionStatus();
     if (this.initialized) {
       this.handleCardTarget();
@@ -204,6 +237,8 @@ struct Index {
   aboutToDisappear(): void {
     this.stopAllEmotionAnimations();
     this.stopUnlockWatcher();
+    this.stopDriftMotion();
+    this.stopDriftHedgehogAnimation();
   }
 
   private getAbilityContext(): common.UIAbilityContext {
@@ -239,7 +274,9 @@ struct Index {
       unlockAt: record.unlockAt ?? 0,
       reminderId: record.reminderId ?? 0,
       photoUris: record.photoUris ?? [],
-      driftStartedAt: record.driftStartedAt ?? 0
+      driftStartedAt: record.driftStartedAt ?? 0,
+      driftTideAt: record.driftTideAt ?? ((record.driftStartedAt ?? 0) + 7 * 24 * 60 * 60 * 1000),
+      driftMoodNow: record.driftMoodNow ?? ''
     };
   }
 
@@ -259,6 +296,7 @@ struct Index {
       this.futureLetters = (saved.futureLetters ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
       this.driftLetters = (saved.driftLetters ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
       this.echoCards = (saved.echoCards ?? []).map((item: LetterRecord) => this.normalizeRecord(item));
+      this.collectedSparkIds = saved.collectedSparkIds ?? [];
       this.nextId = saved.nextId > 0 ? saved.nextId : this.getComputedNextId();
       if (this.echoCards.length > 0) {
         this.activeEchoId = this.containsRecordId(this.echoCards, saved.activeEchoId) ? saved.activeEchoId : this.echoCards[0].id;
@@ -283,7 +321,8 @@ struct Index {
       driftLetters: this.driftLetters,
       echoCards: this.echoCards,
       nextId: this.nextId,
-      activeEchoId: this.activeEchoId
+      activeEchoId: this.activeEchoId,
+      collectedSparkIds: this.collectedSparkIds
     };
     store.putSync(this.letterStoreKey, JSON.stringify(snapshot));
     store.flush()
@@ -323,7 +362,7 @@ struct Index {
         hasLetter: true,
         date: letter.date,
         emotionAndRitual: `${letter.emotion} · ${letter.ritual}`,
-        content: letter.ritual === '燃成光点' ? letter.echoLine : this.createSoftExcerpt(letter.content, 46),
+        content: letter.ritual === '漂流' ? this.getDriftSafeLine(letter) : (letter.ritual === '燃成光点' ? letter.echoLine : this.createSoftExcerpt(letter.content, 46)),
         target: `letter:${letter.id}`
       };
     }
@@ -391,12 +430,30 @@ struct Index {
     if (this.selectedRecipientIndex < 0) {
       return this.recipientOptions[0];
     }
+    if (this.recipientOptions[this.selectedRecipientIndex].id === 'custom' && this.customRecipient.trim().length > 0) {
+      return {
+        id: 'custom',
+        title: `写给${this.customRecipient.trim()}`,
+        subtitle: '这是你亲手写下的收信人',
+        emoji: '✍️',
+        color: '#F3ECE6'
+      };
+    }
     return this.recipientOptions[this.selectedRecipientIndex];
   }
 
   private getSelectedEmotion(): SelectItem {
     if (this.selectedEmotionIndex < 0) {
       return this.emotionOptions[0];
+    }
+    if (this.emotionOptions[this.selectedEmotionIndex].id === 'other' && this.customEmotion.trim().length > 0) {
+      return {
+        id: 'other',
+        title: this.customEmotion.trim(),
+        subtitle: '这是你为此刻亲手写下的心情',
+        emoji: '🌿',
+        color: '#E5EEE5'
+      };
     }
     return this.emotionOptions[this.selectedEmotionIndex];
   }
@@ -408,6 +465,9 @@ struct Index {
         return this.echoCards[index];
       }
       index += 1;
+    }
+    if (this.recalledDriftOrigin && this.recalledDriftOrigin.id === this.activeEchoId) {
+      return this.recalledDriftOrigin;
     }
     return this.echoCards[0];
   }
@@ -451,6 +511,60 @@ struct Index {
     if (this.unlockWatcherTimer !== -1) {
       clearInterval(this.unlockWatcherTimer);
       this.unlockWatcherTimer = -1;
+    }
+  }
+
+  private startDriftMotion(): void {
+    if (this.driftMotionTimer !== -1) {
+      return;
+    }
+    let lifted: boolean = false;
+    const move: () => void = () => {
+      lifted = !lifted;
+      this.getUIContext().animateTo({ duration: 2600, curve: Curve.EaseInOut }, () => {
+        this.driftFloatY = lifted ? -4 : 5;
+        this.driftFloatAngle = lifted ? -1.4 : 1.6;
+      });
+    };
+    move();
+    this.driftMotionTimer = setInterval(move, 2700) as number;
+  }
+
+  private stopDriftMotion(): void {
+    if (this.driftMotionTimer !== -1) {
+      clearInterval(this.driftMotionTimer);
+      this.driftMotionTimer = -1;
+    }
+  }
+
+  private startDriftHedgehogAnimation(): void {
+    if (this.driftHedgehogFrameTimer !== -1) {
+      return;
+    }
+    this.driftHedgehogFrameTimer = setInterval(() => {
+      this.driftHedgehogFrameIndex = (this.driftHedgehogFrameIndex + 1) % 5;
+    }, 220) as number;
+  }
+
+  private stopDriftHedgehogAnimation(): void {
+    if (this.driftHedgehogFrameTimer !== -1) {
+      clearInterval(this.driftHedgehogFrameTimer);
+      this.driftHedgehogFrameTimer = -1;
+    }
+  }
+
+  private getDriftHedgehogFrame(): Resource {
+    switch (this.driftHedgehogFrameIndex) {
+      case 1:
+        return $r('app.media.drift_hedgehog_frame_2');
+      case 2:
+        return $r('app.media.drift_hedgehog_frame_3');
+      case 3:
+        return $r('app.media.drift_hedgehog_frame_4');
+      case 4:
+        return $r('app.media.drift_hedgehog_frame_5');
+      default:
+        return $r('app.media.drift_hedgehog_frame_1');
     }
   }
 
@@ -539,6 +653,20 @@ struct Index {
       }, () => {
         this.emotionEntryOpacity = 1;
         this.emotionEntryOffset = 0;
+      });
+    }, 60);
+  }
+
+  private playDriftDetailEntryAnimation(): void {
+    this.driftDetailEntryOpacity = 0;
+    this.driftDetailEntryOffset = 18;
+    setTimeout(() => {
+      animateTo({
+        duration: 480,
+        curve: Curve.EaseOut
+      }, () => {
+        this.driftDetailEntryOpacity = 1;
+        this.driftDetailEntryOffset = 0;
       });
     }, 60);
   }
@@ -744,15 +872,31 @@ struct Index {
 
   private openArchive(kind: string): void {
     this.archiveKind = kind;
-    this.currentPage = 'archive';
+    this.selectedSparkId = -1;
+    this.currentPage = kind === 'spark' ? 'sparkSky' : (kind === 'drift' ? 'driftSea' : 'archive');
   }
 
   private chooseRecipient(index: number): void {
     this.selectedRecipientIndex = index;
     this.selectedEmotionIndex = -1;
+    this.customEmotion = '';
     this.emotionConfirmLabel = '是什么呢';
     this.futureReminderDate = this.getMinimumFutureDate();
     this.stopAllEmotionAnimations();
+    if (this.recipientOptions[index].id === 'custom') {
+      this.statusText = '写下你想把这封信交给谁。';
+      return;
+    }
+    this.customRecipient = '';
+    this.currentPage = 'emotion';
+    this.statusText = '再选一张情绪信纸，把心情放上去。';
+  }
+
+  private confirmCustomRecipient(): void {
+    if (this.customRecipient.trim().length === 0) {
+      this.statusText = '先写下一个收信人，再继续。';
+      return;
+    }
     this.currentPage = 'emotion';
     this.statusText = '再选一张情绪信纸，把心情放上去。';
   }
@@ -762,10 +906,11 @@ struct Index {
     this.emotionConfirmLabel = `是${this.emotionOptions[index].title}啊`;
     if (this.emotionOptions[index].id === 'other') {
       this.stopAllEmotionAnimations();
-      this.currentPage = 'writing';
-      this.statusText = '说不清也没关系，先慢慢写下来。';
+      this.emotionConfirmLabel = '写下这个心情';
+      this.statusText = '用自己的词，给此刻的心情起个名字。';
       return;
     }
+    this.customEmotion = '';
     this.startSelectedEmotionAnimation(index);
     this.statusText = `原来现在是${this.emotionOptions[index].title}啊。`;
   }
@@ -773,6 +918,10 @@ struct Index {
   private confirmEmotionSelection(): void {
     if (this.selectedEmotionIndex < 0) {
       this.statusText = '先选一种此刻更接近的心情。';
+      return;
+    }
+    if (this.emotionOptions[this.selectedEmotionIndex].id === 'other' && this.customEmotion.trim().length === 0) {
+      this.statusText = '先写下此刻的心情，再继续。';
       return;
     }
     this.stopAllEmotionAnimations();
@@ -993,9 +1142,9 @@ struct Index {
         emotion: record.emotion,
         emotionHint: record.emotionHint,
         ritual: record.ritual,
-        ritualHint: '完整内容和照片仍被好好保存。想重新面对时，你可以随时把它捡回来。',
+        ritualHint: '正文和照片会收在瓶中。它会继续远行，但你随时可以捞起看看。',
         content: record.content,
-        echoLine: '它正在漂流；等你准备好，也可以把它捡回来。',
+        echoLine: '先让这段心事离岸，给自己一点距离。',
         keywords: [record.emotion, '漂流', '暂时放下'],
         moodTag: record.moodTag,
         anonymous: record.anonymous,
@@ -1003,10 +1152,12 @@ struct Index {
         unlockAt: record.unlockAt,
         reminderId: record.reminderId,
         photoUris: [...record.photoUris],
-        driftStartedAt: Date.now()
+        driftStartedAt: Date.now(),
+        driftTideAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        driftMoodNow: ''
       };
       this.driftLetters = [record, ...this.driftLetters];
-      this.statusText = '这封信已经开始漂流了，会慢慢离远一点。';
+      this.statusText = '漂流信已经离岸，小刺猬会陪它慢慢划远。';
     } else if (ritual.id === 'spark') {
       record = {
         id: record.id,
@@ -1037,7 +1188,12 @@ struct Index {
     this.activeEchoId = record.id;
     this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== originalContent);
     this.persistLetters();
-    this.currentPage = 'echo';
+    if (ritual.id === 'drift') {
+      this.enterEcho(record);
+      this.initialDriftReceipt = true;
+    } else {
+      this.currentPage = 'echo';
+    }
   }
 
   private createRecord(ritual: string, ritualHint: string): LetterRecord {
@@ -1123,6 +1279,9 @@ struct Index {
   }
 
   private getRecordStatusLabel(record: LetterRecord): string {
+    if (record.ritual === '漂流') {
+      return this.getDriftStage(record);
+    }
     if (record.ritual === '寄给未来') {
       return this.isFutureUnlocked(record) ? '已开启' : '待开启';
     }
@@ -1173,7 +1332,7 @@ struct Index {
       return '正文和照片已经散去，只留下当时的情绪与这一束回声。';
     }
     if (record.ritual === '漂流') {
-      return '完整内容仍在漂流瓶里，等你准备好时可以随时捡回来。';
+      return '完整内容仍在漂流信里，等你准备好时可以随时捞回来。';
     }
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return `它会在 ${record.unlockDate} 再次来到你面前。`;
@@ -1189,7 +1348,7 @@ struct Index {
       return '原文状态：';
     }
     if (record.ritual === '漂流') {
-      return '漂流瓶中的原文：';
+      return '漂流信中的原文：';
     }
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return '未来开启时间：';
@@ -1198,6 +1357,9 @@ struct Index {
   }
 
   private getDisplayedContent(record: LetterRecord): string {
+    if (record.ritual === '漂流') {
+      return this.getDriftSafeLine(record);
+    }
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return record.unlockDate;
     }
@@ -1208,6 +1370,9 @@ struct Index {
   }
 
   private getArchiveDisplayText(record: LetterRecord): string {
+    if (record.ritual === '漂流') {
+      return this.getDriftSafeLine(record);
+    }
     if (record.ritual === '寄给未来' && !this.isFutureUnlocked(record)) {
       return `将于 ${record.unlockDate} 开启\n在那之前，这封信会先替你安静地留着。`;
     }
@@ -1221,16 +1386,178 @@ struct Index {
     return this.echoCards.filter((item: LetterRecord) => item.ritual === '燃成光点');
   }
 
+  private isSparkCollected(id: number): boolean {
+    return this.collectedSparkIds.indexOf(id) >= 0;
+  }
+
+  private getCollectedSparks(): Array<LetterRecord> {
+    return this.getSparkLetters().filter((item: LetterRecord) => this.isSparkCollected(item.id));
+  }
+
+  private getPendingSparks(): Array<LetterRecord> {
+    return this.getSparkLetters().filter((item: LetterRecord) => !this.isSparkCollected(item.id));
+  }
+
+  private getSparkColor(emotion: string): string {
+    switch (emotion) {
+      case '开心': return '#F2CE83';
+      case '伤心': return '#A9CCE9';
+      case '遗憾': return '#C9B8E8';
+      case '生气': return '#EDA99A';
+      case '迷茫': return '#B9D7C4';
+      default: return '#E9DCC5';
+    }
+  }
+
+  private glowSelectedSpark(id: number): void {
+    this.selectedSparkId = id;
+    this.selectedSparkGlowScale = 0.92;
+    this.selectedSparkGlowOpacity = 0.32;
+    animateTo({
+      duration: 260,
+      curve: Curve.EaseOut,
+      onFinish: () => {
+        animateTo({ duration: 620, curve: Curve.EaseInOut }, () => {
+          this.selectedSparkGlowScale = 1;
+          this.selectedSparkGlowOpacity = 0.42;
+        });
+      }
+    }, () => {
+      this.selectedSparkGlowScale = 1.34;
+      this.selectedSparkGlowOpacity = 0.7;
+    });
+  }
+
+  private collectActiveSpark(): void {
+    if (this.collectingSpark) {
+      return;
+    }
+    const id: number = this.getActiveEcho().id;
+    this.selectedSparkId = id;
+    if (this.isSparkCollected(id)) {
+      this.currentPage = 'sparkSky';
+      return;
+    }
+    this.collectedSparkIds = [...this.collectedSparkIds, id];
+    this.persistLetters();
+    this.collectingSpark = true;
+    this.getUIContext().animateTo({ duration: 650, curve: Curve.EaseInOut, onFinish: () => {
+      this.collectingSpark = false;
+      this.sparkScale = 1;
+      this.sparkOpacity = 1;
+      if (this.currentPage === 'echo' && this.activeEchoId === id) {
+        this.currentPage = 'sparkSky';
+      }
+    } }, () => {
+      this.sparkScale = 0.15;
+      this.sparkOpacity = 0;
+    });
+  }
+
   private getDriftAgeLabel(record: LetterRecord): string {
     if (record.driftStartedAt <= 0) {
       return '已经漂流一段时间';
     }
-    const elapsed: number = Date.now() - record.driftStartedAt;
+    const elapsed: number = this.unlockWatcherNow - record.driftStartedAt;
     const days: number = Math.floor(elapsed / (24 * 60 * 60 * 1000));
     if (days <= 0) {
       return '刚刚开始漂流';
     }
     return `已漂流 ${days} 天`;
+  }
+
+  private getDriftTideAt(record: LetterRecord): number {
+    return record.driftTideAt && record.driftTideAt > 0
+      ? record.driftTideAt : record.driftStartedAt + 7 * 24 * 60 * 60 * 1000;
+  }
+
+  private isDriftReturned(record: LetterRecord): boolean {
+    return this.unlockWatcherNow >= this.getDriftTideAt(record);
+  }
+
+  private getDriftStage(record: LetterRecord): string {
+    if (this.isDriftReturned(record)) {
+      return '随潮归来';
+    }
+    const cycleStart: number = this.getDriftTideAt(record) - 7 * 24 * 60 * 60 * 1000;
+    const days: number = Math.floor((this.unlockWatcherNow - cycleStart) / (24 * 60 * 60 * 1000));
+    if (days <= 0) {
+      return '近岸轻漂';
+    }
+    if (days < 3) {
+      return '驶向远海';
+    }
+    return days < 6 ? '远海漫游' : '循潮归来';
+  }
+
+  private getDriftSafeLine(record: LetterRecord): string {
+    if (this.isDriftReturned(record)) {
+      return '小刺猬顺着潮水划回岸边。它没有催你，只是在等你的决定。';
+    }
+    return '这封信正在海上旅行。你可以观察它，也可以随时把它捞回来。';
+  }
+
+  private getDriftRemainingLabel(record: LetterRecord): string {
+    return this.isDriftReturned(record) ? '已经靠岸 · 随时可以打开' : '不必等到某一天 · 想看时就捞起它';
+  }
+
+  private getDriftJourneyLine(record: LetterRecord): string {
+    if (this.isDriftReturned(record)) {
+      return '它没有催你，只是安静地回到了岸边';
+    }
+    const days: number = Math.max(0, Math.floor((this.unlockWatcherNow - record.driftStartedAt) / (24 * 60 * 60 * 1000)));
+    if (days <= 0) {
+      return '海风刚刚接过这件心事';
+    }
+    if (days < 3) {
+      return '离岸之后，那些声音正在变轻';
+    }
+    if (days < 6) {
+      return '它漂到远处，而你仍在继续生活';
+    }
+    return '潮水正在把它慢慢送向你';
+  }
+
+  private getDriftMoodLabel(): string {
+    const options: Array<string> = ['轻松些了', '仍有点难过', '平静了', '还说不清'];
+    if (this.driftMoodIndex === 4) {
+      return this.driftCustomMood.trim();
+    }
+    return this.driftMoodIndex >= 0 && this.driftMoodIndex < options.length ? options[this.driftMoodIndex] : '';
+  }
+
+  private hasCurrentDriftMood(): boolean {
+    return this.driftMoodIndex >= 0 && (this.driftMoodIndex !== 4 || this.driftCustomMood.trim().length > 0);
+  }
+
+  private continueDrift(record: LetterRecord): void {
+    const next: LetterRecord = this.normalizeRecord(record);
+    next.driftTideAt = this.unlockWatcherNow + 7 * 24 * 60 * 60 * 1000;
+    this.driftLetters = this.driftLetters.map((item: LetterRecord) => item.id === record.id ? next : item);
+    this.echoCards = this.echoCards.map((item: LetterRecord) => item.id === record.id ? next : item);
+    this.driftPeek = false;
+    this.driftMoodIndex = -1;
+    this.driftCustomMood = '';
+    this.persistLetters();
+    this.currentPage = 'driftSea';
+    this.statusText = '小刺猬再次带着漂流信驶向远海。想看看时，随时回来。';
+  }
+
+  private convertDriftToSpark(record: LetterRecord): void {
+    const spark: LetterRecord = this.normalizeRecord(record);
+    spark.ritual = '燃成光点';
+    spark.ritualHint = '正文和照片已经化成光点，只留下这一刻的情绪与回声。';
+    spark.content = '';
+    spark.photoUris = [];
+    spark.echoLine = '曾经漂流的心事，终于化成了一点光。';
+    spark.keywords = [record.emotion, '光点', '放下'];
+    spark.driftStartedAt = 0;
+    spark.driftTideAt = 0;
+    this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== record.id);
+    this.echoCards = this.echoCards.map((item: LetterRecord) => item.id === record.id ? spark : item);
+    this.persistLetters();
+    this.currentPage = 'echo';
+    this.statusText = '漂流信已经化成光点，原文和照片不再保留。';
   }
 
   private getEchoLine(ritual: string): string {
@@ -1264,6 +1591,8 @@ struct Index {
   private resetComposer(): void {
     this.selectedRecipientIndex = -1;
     this.selectedEmotionIndex = -1;
+    this.customRecipient = '';
+    this.customEmotion = '';
     this.emotionConfirmLabel = '是什么呢';
     this.letterTitle = '';
     this.letterContent = '';
@@ -1271,22 +1600,43 @@ struct Index {
     this.isAnonymous = false;
     this.moodTag = '私语';
     this.futureReminderDate = this.getMinimumFutureDate();
+    this.driftReflection = '';
+    this.writingReturnPage = 'emotion';
+    this.recalledDriftOrigin = undefined;
   }
 
-  private continueDraft(record: LetterRecord): void {
+  private continueDraft(record: LetterRecord, fromDrift: boolean = false): void {
     this.selectedRecipientIndex = this.findIndexByTitle(this.recipientOptions, record.recipient);
     this.selectedEmotionIndex = this.findIndexByTitle(this.emotionOptions, record.emotion);
+    this.customRecipient = '';
+    this.customEmotion = '';
+    if (this.selectedRecipientIndex === 0 && record.recipient !== this.recipientOptions[0].title) {
+      this.selectedRecipientIndex = this.recipientOptions.length - 1;
+      this.customRecipient = record.recipient.replace('写给', '');
+    }
+    if (this.selectedEmotionIndex === 0 && record.emotion !== this.emotionOptions[0].title) {
+      this.selectedEmotionIndex = this.emotionOptions.length - 1;
+      this.customEmotion = record.emotion;
+    }
     this.letterTitle = record.title ?? '';
     this.letterContent = record.content;
     this.photoUris = [...(record.photoUris ?? [])];
     this.moodTag = record.moodTag;
     this.isAnonymous = record.anonymous;
     this.futureReminderDate = this.getMinimumFutureDate();
+    this.driftReflection = record.driftMoodNow && record.driftMoodNow.length > 0
+      ? `漂流前：${record.emotion}  →  现在：${record.driftMoodNow}` : '';
+    this.writingReturnPage = fromDrift ? 'driftDetail' : 'emotion';
+    if (!fromDrift) {
+      this.recalledDriftOrigin = undefined;
+    }
     this.currentPage = 'writing';
     this.statusText = '已经帮你把草稿重新铺开了。';
   }
 
   private recallDriftLetter(record: LetterRecord): void {
+    const moodNow: string = this.getDriftMoodLabel();
+    this.recalledDriftOrigin = this.normalizeRecord(record);
     const draft: LetterRecord = {
       id: record.id,
       title: record.title,
@@ -1297,26 +1647,26 @@ struct Index {
       emotion: record.emotion,
       emotionHint: record.emotionHint,
       ritual: '草稿',
-      ritualHint: '从漂流中捡回，等你准备好再继续',
+      ritualHint: `漂流前：${record.emotion} · 现在：${moodNow || '还说不清'}`,
       content: record.content,
-      keywords: [record.emotion, record.moodTag, '重新面对'],
-      echoLine: '你把它捡回来了，可以继续写下去。',
+      keywords: [record.emotion, moodNow || '还说不清', '重新面对'],
+      echoLine: `那时是${record.emotion}，现在${moodNow || '还说不清'}。你把它捡回来了。`,
       moodTag: record.moodTag,
       anonymous: record.anonymous,
       unlockDate: '',
       unlockAt: 0,
       reminderId: 0,
       photoUris: [...record.photoUris],
-      driftStartedAt: 0
+      driftStartedAt: 0,
+      driftTideAt: 0,
+      driftMoodNow: moodNow
     };
     this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== record.id);
     this.echoCards = this.echoCards.filter((item: LetterRecord) => item.id !== record.id);
     this.drafts = [draft, ...this.drafts.filter((item: LetterRecord) => item.id !== record.id)];
-    if (this.activeEchoId === record.id) {
-      this.activeEchoId = this.echoCards.length > 0 ? this.echoCards[0].id : -1;
-    }
+    this.activeEchoId = record.id;
     this.persistLetters();
-    this.continueDraft(draft);
+    this.continueDraft(draft, true);
     this.statusText = '漂流的信已经捡回，完整正文和照片都还在。';
   }
 
@@ -1333,8 +1683,16 @@ struct Index {
 
   private enterEcho(record: LetterRecord): void {
     this.openedMenuId = -1;
+    this.recalledDriftOrigin = undefined;
+    this.writingReturnPage = 'emotion';
+    this.initialDriftReceipt = false;
     this.activeEchoId = record.id;
-    this.currentPage = 'echo';
+    this.driftPeek = false;
+    this.driftMoodIndex = -1;
+    this.driftCustomMood = '';
+    this.driftDetailEntryOpacity = 0;
+    this.driftDetailEntryOffset = 18;
+    this.currentPage = record.ritual === '漂流' ? 'driftDetail' : 'echo';
   }
 
   private toggleDeleteMenu(recordId: number): void {
@@ -1361,6 +1719,7 @@ struct Index {
     this.futureLetters = this.futureLetters.filter((item: LetterRecord) => item.id !== targetId);
     this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== targetId);
     this.echoCards = this.echoCards.filter((item: LetterRecord) => item.id !== targetId);
+    this.collectedSparkIds = this.collectedSparkIds.filter((id: number) => id !== targetId);
 
     if (this.activeEchoId === targetId) {
       if (this.echoCards.length > 0) {
@@ -1390,7 +1749,7 @@ struct Index {
       return '未来信';
     }
     if (this.archiveKind === 'drift') {
-      return '漂流瓶';
+      return '漂流信';
     }
     if (this.archiveKind === 'spark') {
       return '光点星空';
@@ -1458,6 +1817,41 @@ struct Index {
     });
 
     return merged.slice(0, limit);
+  }
+
+  private getRecordTimestamp(record: LetterRecord): number {
+    const parts: Array<string> = record.date.split('.');
+    if (parts.length !== 3) {
+      return 0;
+    }
+    return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getTime();
+  }
+
+  private getFilteredEchoCards(): Array<LetterRecord> {
+    if (this.echoTimeFilter === 'all') {
+      return this.echoCards;
+    }
+    const now: Date = new Date(this.unlockWatcherNow);
+    if (this.echoTimeFilter === 'year') {
+      return this.echoCards.filter((item: LetterRecord) => {
+        const timestamp: number = this.getRecordTimestamp(item);
+        return timestamp > 0 && new Date(timestamp).getFullYear() === now.getFullYear();
+      });
+    }
+    const days: number = this.echoTimeFilter === '7d' ? 7 : 30;
+    const cutoff: number = this.unlockWatcherNow - days * 24 * 60 * 60 * 1000;
+    return this.echoCards.filter((item: LetterRecord) => this.getRecordTimestamp(item) >= cutoff);
+  }
+
+  private getDriftCardBackground(emotion: string): string {
+    switch (emotion) {
+      case '开心': return '#FBF3DE';
+      case '伤心': return '#EAF2F5';
+      case '遗憾': return '#F1ECF4';
+      case '生气': return '#F7ECE8';
+      case '迷茫': return '#EAF2ED';
+      default: return '#F6F1EA';
+    }
   }
 
   @Builder
@@ -1689,11 +2083,22 @@ struct Index {
           if (this.currentPage === 'emotion') {
             this.currentPage = 'recipient';
           } else if (this.currentPage === 'writing') {
-            this.currentPage = 'emotion';
+            if (this.writingReturnPage === 'driftDetail' && this.recalledDriftOrigin) {
+              this.activeEchoId = this.recalledDriftOrigin.id;
+              this.driftPeek = false;
+              this.currentPage = 'driftDetail';
+            } else {
+              this.currentPage = 'emotion';
+            }
           } else if (this.currentPage === 'futureSchedule') {
             this.currentPage = 'ritual';
           } else if (this.currentPage === 'sparkConfirm') {
             this.currentPage = 'ritual';
+          } else if (this.currentPage === 'driftDetail') {
+            this.currentPage = 'driftSea';
+            this.driftPeek = false;
+          } else if (this.currentPage === 'driftSparkConfirm') {
+            this.currentPage = 'driftDetail';
           } else if (this.currentPage === 'ritual') {
             this.currentPage = 'writing';
           } else {
@@ -1706,9 +2111,11 @@ struct Index {
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
           .fontColor('#2D2520')
-        Text(subtitle)
-          .fontSize(12)
-          .fontColor('#8A8178')
+        if (subtitle.length > 0) {
+          Text(subtitle)
+            .fontSize(12)
+            .fontColor('#8A8178')
+        }
       }
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 8 })
@@ -1774,24 +2181,92 @@ struct Index {
   }
 
   @Builder
+  private buildHomeWriteCard() {
+    Column() {
+      Row({ space: 10 }) {
+        Text(`${new Date().getDate()}`.padStart(2, '0'))
+          .fontSize(34)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#6C99A6')
+        Text(`${new Date().getFullYear()}年${new Date().getMonth() + 1}月`)
+          .fontSize(17)
+          .fontColor('#8D857B')
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Bottom)
+
+      Text('—')
+        .fontSize(20)
+        .fontColor('#443B34')
+        .width('100%')
+        .margin({ top: 2 })
+
+      Text('今天想说什么，\n就从第一句开始。')
+        .fontSize(15)
+        .lineHeight(25)
+        .fontColor('#5F564E')
+        .width('100%')
+        .margin({ top: 10 })
+
+      Blank()
+
+      Image($r('app.media.home_hedgehog'))
+        .width(184)
+        .height(152)
+        .objectFit(ImageFit.Contain)
+
+      Blank()
+
+      Row() {
+        Blank()
+        Text('写一封信')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+        Blank()
+      }
+      .width('72%')
+      .padding({ top: 14, bottom: 14 })
+      .backgroundColor('#3D3530')
+      .borderRadius(26)
+    }
+    .width(292)
+    .height(432)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ left: 28, right: 28, top: 28, bottom: 28 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(30)
+    .shadow({ radius: 24, color: '#16000000', offsetX: 0, offsetY: 9 })
+    .opacity(this.homeEntryOpacity)
+    .translate({ x: 0, y: this.homeEntryOffset })
+    .onClick(() => {
+      this.resetComposer();
+      this.openComposer();
+    })
+    .onAppear(() => {
+      this.playHomeEntryAnimation();
+    })
+  }
+
+  @Builder
   private buildRecentCard(item: LetterRecord) {
     Stack({ alignContent: Alignment.TopEnd }) {
       Column() {
         if ((item.photoUris ?? []).length > 0) {
           Image(item.photoUris[0])
             .width('100%')
-            .height(196)
+            .height(314)
             .borderRadius({ topLeft: 24, topRight: 24 })
             .objectFit(ImageFit.Cover)
         } else {
           Stack({ alignContent: Alignment.Center }) {
             Image(this.getEmotionCover(item.emotion))
-              .width(150)
-              .height(140)
+              .width(184)
+              .height(174)
               .objectFit(ImageFit.Contain)
           }
             .width('100%')
-            .height(196)
+            .height(314)
             .borderRadius({ topLeft: 24, topRight: 24 })
             .backgroundColor('#F8F5F0')
         }
@@ -1824,6 +2299,7 @@ struct Index {
         .padding({ left: 18, right: 18, top: 14, bottom: 14 })
       }
       .width('100%')
+      .height(432)
       .backgroundColor('#FFFFFF')
       .borderRadius(24)
       .onClick(() => {
@@ -1851,7 +2327,9 @@ struct Index {
         })
       }
     }
-    .width(280)
+    .width(292)
+    .height(432)
+    .shadow({ radius: 24, color: '#14000000', offsetX: 0, offsetY: 9 })
   }
 
   @Builder
@@ -1996,84 +2474,26 @@ struct Index {
         .padding({ left: 20, right: 20, top: 18 })
 
         if (this.homeTab === 0) {
-          Column({ space: 14 }) {
-            Column({ space: 12 }) {
-              Row() {
-                Column({ space: 8 }) {
-                  Text('写一封信')
-                    .fontSize(24)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#2C251F')
-                  Text('今天也可以慢慢写，\n不急着发送。')
-                    .fontSize(13)
-                    .lineHeight(22)
-                    .fontColor('#7B7269')
-                }
-                .alignItems(HorizontalAlign.Start)
-
-                Blank()
-
-                Image($r('app.media.home_hedgehog'))
-                  .width(156)
-                  .height(108)
-                  .objectFit(ImageFit.Contain)
-                  .margin({ top: 8 })
-              }
-              .width('100%')
-
-              Row() {
-                Text('点击进入')
-                  .fontSize(14)
-                  .fontColor('#5E5850')
-                Blank()
-                Text('✎')
-                  .fontSize(16)
-                  .fontColor('#5E5850')
-              }
-              .width('100%')
+          Scroll() {
+            Row({ space: 18 }) {
+              this.buildHomeWriteCard()
+              ForEach(this.getRecentLetters(6), (item: LetterRecord) => {
+                this.buildRecentCard(item)
+              }, (item: LetterRecord) => `recent-${item.id}`)
             }
-            .width('100%')
-            .padding(20)
-            .backgroundColor('#FBF7F1')
-            .borderRadius(28)
-            .opacity(this.homeEntryOpacity)
-            .translate({ x: 0, y: this.homeEntryOffset })
-            .onClick(() => {
-              this.resetComposer();
-              this.openComposer();
-            })
+            .width('max-content')
+            .padding({ left: 20, right: 20, top: 8, bottom: 28 })
+            .opacity(this.recentEntryOpacity)
+            .translate({ x: 0, y: this.recentEntryOffset })
             .onAppear(() => {
-              this.playHomeEntryAnimation();
+              this.playRecentEntryAnimation();
             })
-
-            if (this.getRecentLetters(3).length > 0) {
-              Column({ space: 10 }) {
-                Text('最近几封')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#403731')
-                  .width('100%')
-                Scroll() {
-                  Row({ space: 14 }) {
-                    ForEach(this.getRecentLetters(6), (item: LetterRecord) => {
-                      this.buildRecentCard(item)
-                    }, (item: LetterRecord) => `recent-${item.id}`)
-                  }
-                  .width('max-content')
-                }
-                .scrollable(ScrollDirection.Horizontal)
-                .scrollBar(BarState.Off)
-                .width('100%')
-              }
-              .width('100%')
-              .opacity(this.recentEntryOpacity)
-              .translate({ x: 0, y: this.recentEntryOffset })
-              .onAppear(() => {
-                this.playRecentEntryAnimation();
-              })
-            }
           }
-          .padding({ left: 20, right: 20, bottom: 110 })
+          .width('100%')
+          .height(500)
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .padding({ bottom: 24 })
         } else if (this.homeTab === 1) {
           Column({ space: 12 }) {
             Text('情绪回声')
@@ -2082,10 +2502,32 @@ struct Index {
               .fontColor('#2E2721')
               .width('100%')
 
+            Scroll() {
+              Row({ space: 8 }) {
+                ForEach(['all', '7d', '30d', 'year'], (filter: string) => {
+                  Text(filter === 'all' ? '全部' : (filter === '7d' ? '近7天' : (filter === '30d' ? '近30天' : '今年')))
+                    .fontSize(13)
+                    .fontColor(this.echoTimeFilter === filter ? '#FFFFFF' : '#6E655D')
+                    .padding({ left: 16, right: 16, top: 9, bottom: 9 })
+                    .backgroundColor(this.echoTimeFilter === filter ? '#718F99' : '#F2EDE7')
+                    .borderRadius(18)
+                    .onClick(() => {
+                      this.echoTimeFilter = filter;
+                    })
+                }, (filter: string) => filter)
+              }
+              .width('max-content')
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .width('100%')
+
             if (this.echoCards.length === 0) {
               this.buildEmptyState('还没有回声卡', '完成一封信后，这里会留下你的温柔回声。')
+            } else if (this.getFilteredEchoCards().length === 0) {
+              this.buildEmptyState('这个时间段还没有回声', '换一个时间范围，再看看曾经留下的心情。')
             } else {
-              ForEach(this.echoCards, (item: LetterRecord) => {
+              ForEach(this.getFilteredEchoCards(), (item: LetterRecord) => {
                 this.buildEchoListCard(item)
               }, (item: LetterRecord) => `${item.id}`)
             }
@@ -2104,8 +2546,8 @@ struct Index {
               this.buildMailboxCard('草稿箱', `${this.drafts.length} 封草稿`, '#F5EFE7', 'draft')
               this.buildMailboxCard('封存的信', `${this.sealedLetters.length} 封信件`, '#F4EEE7', 'sealed')
               this.buildMailboxCard('未来信', `${this.getUnlockedFutureCount()} / ${this.futureLetters.length} 已开启`, '#F2F4F8', 'future')
-              this.buildMailboxCard('漂流瓶', `${this.driftLetters.length} 封正在漂流`, '#EAF0F6', 'drift')
-              this.buildMailboxCard('光点星空', `${this.getSparkLetters().length} 颗光点`, '#F9ECD8', 'spark')
+              this.buildMailboxCard('漂流信', `${this.driftLetters.length} 封在海上 · 随时可捞起`, '#EAF0F6', 'drift')
+              this.buildMailboxCard('光点星空', `${this.getCollectedSparks().length} 已点亮 · ${this.getPendingSparks().length} 待收下`, '#F9ECD8', 'spark')
               this.buildMailboxCard('情绪回声卡', `${this.echoCards.length} 张回声卡`, '#F5F1EA', 'echo')
             }
             .width('100%')
@@ -2152,6 +2594,35 @@ struct Index {
         ForEach(this.recipientOptions, (item: SelectItem, index: number) => {
           this.buildRecipientCard(item, index)
         }, (item: SelectItem) => item.id)
+
+        if (this.selectedRecipientIndex >= 0 && this.recipientOptions[this.selectedRecipientIndex].id === 'custom') {
+          Column({ space: 14 }) {
+            TextInput({ text: this.customRecipient, placeholder: '例如：曾经的朋友、还没说出口的人' })
+              .width('100%')
+              .height(48)
+              .fontSize(15)
+              .fontColor('#3E362F')
+              .placeholderColor('#A69B90')
+              .backgroundColor('#00FFFFFF')
+              .padding({ left: 2, right: 2 })
+              .maxLength(20)
+              .onChange((value: string) => {
+                this.customRecipient = value;
+              })
+            Divider()
+              .strokeWidth(1)
+              .color('#A89B8D')
+            Column() {
+              this.buildPrimaryAction(this.customRecipient.trim().length > 0 ? '写给这个人' : '先写下收信人', '#8E8277')
+            }
+            .opacity(this.customRecipient.trim().length > 0 ? 1 : 0.56)
+            .onClick(() => {
+              this.confirmCustomRecipient();
+            })
+          }
+          .width('100%')
+          .padding({ left: 6, right: 6, top: 4, bottom: 6 })
+        }
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 40 })
@@ -2186,6 +2657,28 @@ struct Index {
           this.stopAllEmotionAnimations();
         })
 
+        if (this.selectedEmotionIndex >= 0 && this.emotionOptions[this.selectedEmotionIndex].id === 'other') {
+          Column({ space: 2 }) {
+            TextInput({ text: this.customEmotion, placeholder: '此刻更贴切的心情是……' })
+              .width('100%')
+              .height(46)
+              .fontSize(15)
+              .fontColor('#3E362F')
+              .placeholderColor('#A69B90')
+              .backgroundColor('#00FFFFFF')
+              .padding({ left: 2, right: 2 })
+              .maxLength(16)
+              .onChange((value: string) => {
+                this.customEmotion = value;
+              })
+            Divider()
+              .strokeWidth(1)
+              .color('#A89B8D')
+          }
+          .width('100%')
+          .padding({ left: 26, right: 26, bottom: 8 })
+        }
+
         Row() {
           Blank()
           Row() {
@@ -2206,7 +2699,8 @@ struct Index {
             offsetX: 0,
             offsetY: 6
           })
-          .opacity(this.selectedEmotionIndex >= 0 ? 1 : 0.92)
+          .opacity(this.selectedEmotionIndex >= 0 &&
+            (this.emotionOptions[this.selectedEmotionIndex].id !== 'other' || this.customEmotion.trim().length > 0) ? 1 : 0.72)
           .onClick(() => {
             this.confirmEmotionSelection();
           })
@@ -2226,6 +2720,16 @@ struct Index {
         `写给${this.getSelectedRecipient().title.replace('写给', '')}`,
         `${this.getSelectedEmotion().title}会替你先垫住情绪。`
       )
+
+      if (this.driftReflection.length > 0) {
+        Text(this.driftReflection)
+          .fontSize(13)
+          .fontColor('#4E7884')
+          .width('90%')
+          .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+          .backgroundColor('#E8F2F2')
+          .borderRadius(14)
+      }
 
       Column({ space: 12 }) {
         TextInput({ text: this.letterTitle, placeholder: '给这封信写一个标题（选填）' })
@@ -2510,6 +3014,29 @@ struct Index {
           this.getEchoPageSubtitle(this.getActiveEcho())
         )
 
+        if (this.getActiveEcho().ritual === '燃成光点') {
+          Column({ space: 18 }) {
+            Circle()
+              .width(32)
+              .height(32)
+              .fill(this.getSparkColor(this.getActiveEcho().emotion))
+              .borderRadius(50)
+              .shadow({ radius: 36, color: this.getSparkColor(this.getActiveEcho().emotion), offsetX: 0, offsetY: 0 })
+              .scale({ x: this.sparkScale, y: this.sparkScale })
+              .opacity(this.sparkOpacity)
+            Text(this.collectingSpark ? '正在飞往你的星空…' : (this.isSparkCollected(this.getActiveEcho().id) ? '这颗光，已经在你的星空里。' : '把这一点光，留给往后的自己。'))
+              .fontSize(14)
+              .fontColor('#DCD6D1')
+            Text(this.getActiveEcho().echoLine)
+              .fontSize(12)
+              .fontColor('#A6A8B8')
+          }
+          .width('100%')
+          .padding({ top: 44, bottom: 32, left: 16, right: 16 })
+          .backgroundColor('#252B40')
+          .borderRadius(28)
+        }
+
         Column({ space: 10 }) {
           Text(this.getActiveEcho().date)
             .fontSize(22)
@@ -2596,11 +3123,17 @@ struct Index {
           } else {
             Column() {
               this.buildPrimaryAction(
-                this.getActiveEcho().ritual === '燃成光点' ? '收下这颗光点' : '保存回声卡',
+                this.getActiveEcho().ritual === '燃成光点'
+                  ? (this.collectingSpark ? '正在点亮星空…' : (this.isSparkCollected(this.getActiveEcho().id) ? '已收下 · 去星空看看' : '收下这颗光点'))
+                  : '保存回声卡',
                 '#9AAFC4'
               )
             }
             .onClick(() => {
+              if (this.getActiveEcho().ritual === '燃成光点') {
+                this.collectActiveSpark();
+                return;
+              }
               this.homeTab = 1;
               this.currentPage = 'home';
               this.statusText = this.getActiveEcho().ritual === '燃成光点'
@@ -2620,6 +3153,488 @@ struct Index {
       }
       .width('100%')
       .padding({ left: 20, right: 20, bottom: 24 })
+    }
+  }
+
+  @Builder
+  private buildSparkSky() {
+    Scroll() {
+      Column({ space: 20 }) {
+        this.buildBackHeader('光点星空', '那些放下的心事，成了陪伴你的光。')
+        Column({ space: 16 }) {
+          Text('属于你的微光')
+            .fontSize(14)
+            .fontColor('#C8C2C0')
+          Text(`${this.getCollectedSparks().length} 颗心事，已化作星光`)
+            .fontSize(22)
+            .fontColor('#F6ECDD')
+          if (this.getCollectedSparks().length === 0) {
+            Text('✧')
+              .fontSize(58)
+              .fontColor('#D8C7A1')
+              .margin({ top: 28, bottom: 12 })
+            Text('星空还在等第一束光\n收下一颗光点，它就会在这里亮起。')
+              .fontSize(14)
+              .lineHeight(24)
+              .textAlign(TextAlign.Center)
+              .fontColor('#B7B8C7')
+          } else {
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+              ForEach(this.getCollectedSparks(), (item: LetterRecord, index: number) => {
+                Column({ space: 14 }) {
+                  Stack({ alignContent: Alignment.Center }) {
+                    if (this.selectedSparkId === item.id) {
+                      Circle()
+                        .width(34)
+                        .height(34)
+                        .fill(this.getSparkColor(item.emotion))
+                        .opacity(this.selectedSparkGlowOpacity * 0.3)
+                        .scale({ x: this.selectedSparkGlowScale, y: this.selectedSparkGlowScale })
+                    }
+                    Circle()
+                      .width(this.selectedSparkId === item.id ? 20 : 14)
+                      .height(this.selectedSparkId === item.id ? 20 : 14)
+                      .fill(this.getSparkColor(item.emotion))
+                      .borderRadius(50)
+                  }
+                  .width(46)
+                  .height(46)
+                  Text(this.selectedSparkId === item.id ? '✧ 这一束光' : item.emotion)
+                    .fontSize(11)
+                    .fontColor(this.selectedSparkId === item.id ? '#F6ECDD' : '#ADAFC1')
+                }
+                .width('25%')
+                .height(112)
+                .justifyContent(FlexAlign.Center)
+                .translate({ y: index % 2 === 0 ? -6 : 8 })
+                .onClick(() => {
+                  this.glowSelectedSpark(item.id);
+                })
+              }, (item: LetterRecord) => `star-${item.id}`)
+            }
+            .width('100%')
+            .padding({ top: 16, bottom: 16 })
+            Text('轻触一束光，看看当时的自己')
+              .fontSize(12)
+              .fontColor('#A6A8BB')
+          }
+        }
+        .width('100%')
+        .padding({ top: 28, bottom: 30, left: 16, right: 16 })
+        .backgroundColor('#252B40')
+        .borderRadius(28)
+
+        ForEach(this.getCollectedSparks().filter((item: LetterRecord) => item.id === this.selectedSparkId), (item: LetterRecord) => {
+          Column({ space: 12 }) {
+            Text(`${item.date} · ${item.emotion}`)
+              .fontSize(13)
+              .fontColor('#8E8174')
+            Text(item.title.length > 0 ? item.title : '一颗没有名字的光')
+              .fontSize(19)
+              .fontColor('#3B322A')
+            Text(item.echoLine)
+              .fontSize(16)
+              .lineHeight(26)
+              .fontColor('#65594D')
+            Text('已收入星空 · 原文与照片不再保留')
+              .fontSize(12)
+              .fontColor('#9B9084')
+          }
+          .width('100%')
+          .padding(22)
+          .backgroundColor('#FBF7F1')
+          .borderRadius(24)
+        }, (item: LetterRecord) => `selected-${item.id}`)
+
+        if (this.getPendingSparks().length > 0) {
+          Text('还有微光，等你收下')
+            .fontSize(16)
+            .fontColor('#66594E')
+            .width('100%')
+          ForEach(this.getPendingSparks(), (item: LetterRecord) => {
+            Row() {
+              Text(`${item.date} · ${item.emotion}`)
+                .fontSize(14)
+                .fontColor('#75685C')
+              Blank()
+              Text('去收下  ›')
+                .fontSize(14)
+                .fontColor('#A17F58')
+            }
+            .width('100%')
+            .padding(20)
+            .backgroundColor('#F6ECDD')
+            .borderRadius(20)
+            .onClick(() => {
+              this.enterEcho(item);
+            })
+          }, (item: LetterRecord) => `pending-${item.id}`)
+        }
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 30 })
+    }
+  }
+
+  @Builder
+  private buildDriftBottle(returned: boolean, large: boolean) {
+    Stack({ alignContent: Alignment.Center }) {
+      Image(this.getDriftHedgehogFrame())
+        .width(large ? 310 : 266)
+        .height(large ? 310 : 266)
+        .objectFit(ImageFit.Contain)
+    }
+    .width('100%')
+    .height(large ? 292 : 248)
+    .rotate({ angle: (returned ? -1 : 0) + this.driftFloatAngle })
+    .scale({ x: this.driftBottleScale, y: this.driftBottleScale })
+    .translate({ x: this.driftBottleOffset, y: this.driftFloatY })
+      .opacity(this.driftBottleOpacity)
+  }
+
+  @Builder
+  private buildDriftSeaScene(record: LetterRecord, large: boolean) {
+    Column({ space: 4 }) {
+      Row() {
+        Text(this.getDriftStage(record))
+          .fontSize(11)
+          .letterSpacing(2)
+          .fontColor('#6C858A')
+        Blank()
+        Text(this.getDriftAgeLabel(record))
+          .fontSize(11)
+          .fontColor('#8A9B9E')
+      }
+      .width('100%')
+      .padding({ left: 10, right: 10 })
+
+      this.buildDriftBottle(this.isDriftReturned(record), large)
+
+      Text(this.getDriftJourneyLine(record))
+        .fontSize(large ? 18 : 15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#315B65')
+        .textAlign(TextAlign.Center)
+      Text(this.getDriftRemainingLabel(record))
+        .fontSize(11)
+        .fontColor('#607C82')
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .height(large ? 360 : 310)
+    .justifyContent(FlexAlign.SpaceBetween)
+    .padding({ top: 10, bottom: 10 })
+  }
+
+  @Builder
+  private buildDriftLetterCard(record: LetterRecord) {
+    Column({ space: 16 }) {
+      Row() {
+        Text(this.getDriftStage(record))
+          .fontSize(11)
+          .letterSpacing(1.5)
+          .fontColor('#52747D')
+          .padding({ left: 11, right: 11, top: 6, bottom: 6 })
+          .backgroundColor('#B8FFFFFF')
+          .borderRadius(14)
+        Blank()
+        Text(this.getDriftAgeLabel(record))
+          .fontSize(11)
+          .fontColor('#7A8D91')
+      }
+      .width('100%')
+
+      Row({ space: 18 }) {
+        Column({ space: 10 }) {
+          Text(record.title.trim().length > 0 ? record.title : '一封没有标题的漂流信')
+            .fontSize(19)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#304D54')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.getDriftJourneyLine(record))
+            .fontSize(13)
+            .lineHeight(21)
+            .fontColor('#657C81')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Column() {
+          Text('✉')
+            .fontSize(42)
+            .fontColor('#507B86')
+        }
+        .width(76)
+        .height(76)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#A8FFFFFF')
+        .borderRadius(24)
+      }
+      .width('100%')
+
+      Divider()
+        .strokeWidth(1)
+        .color('#75FFFFFF')
+
+      Row() {
+        Text(`${record.date} · ${record.emotion}`)
+          .fontSize(12)
+          .fontColor('#6C7F84')
+        Blank()
+        Text(this.isDriftReturned(record) ? '已经靠岸  ›' : '靠近看看  ›')
+          .fontSize(13)
+          .fontColor('#3F7481')
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(20)
+    .backgroundColor(this.getDriftCardBackground(record.emotion))
+    .borderRadius(26)
+    .shadow({ radius: 18, color: '#11000000', offsetX: 0, offsetY: 7 })
+    .onClick(() => {
+      this.enterEcho(record);
+    })
+  }
+
+  @Builder
+  private buildDriftSea() {
+    Scroll() {
+      Column({ space: 18 }) {
+        this.buildBackHeader('漂流海', '时间不替你决定，只帮你拉开一点距离。')
+        Column({ space: 6 }) {
+          Text(`${this.driftLetters.length} 封漂流信`)
+            .fontSize(26)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#315361')
+          Text(`${this.driftLetters.length} 封在海上 · 都可以随时捞起`)
+            .fontSize(13)
+            .fontColor('#6B8A94')
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+
+        if (this.driftLetters.length === 0) {
+          this.buildEmptyState('海面还是空的', '写一封信，选择漂流，让它暂时离开岸边。')
+        } else {
+          ForEach(this.driftLetters, (item: LetterRecord) => {
+            this.buildDriftLetterCard(item)
+          }, (item: LetterRecord) => `drift-${item.id}`)
+        }
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 35 })
+    }
+  }
+
+  @Builder
+  private buildDriftDetail() {
+    Scroll() {
+      Column({ space: 18 }) {
+        this.buildBackHeader(this.isDriftReturned(this.getActiveEcho()) ? '漂流信回到了岸边' : '去看看漂流中的它', '')
+        this.buildDriftSeaScene(this.getActiveEcho(), true)
+
+        if (this.initialDriftReceipt) {
+          Column() {
+            this.buildPrimaryAction('保存回声卡', '#608FA0')
+          }
+          .onClick(() => {
+            this.initialDriftReceipt = false;
+            this.homeTab = 1;
+            this.currentPage = 'home';
+            this.statusText = '回声卡已经保存到回声里了。';
+          })
+        } else {
+          if (this.driftPeek) {
+            Column({ space: 14 }) {
+            Row() {
+              Text('瓶中那封信')
+                .fontSize(17)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#3E575D')
+              Blank()
+              Text('轻触收起')
+                .fontSize(12)
+                .fontColor('#75909A')
+            }
+            .width('100%')
+            Text(this.getActiveEcho().title.trim().length > 0 ? this.getActiveEcho().title : '一封没有标题的信')
+              .fontSize(16)
+              .fontColor('#52676C')
+            Text(this.getActiveEcho().content)
+              .fontSize(16)
+              .lineHeight(27)
+              .fontColor('#37474B')
+            ForEach(this.getActiveEcho().photoUris, (uri: string) => {
+              Image(uri)
+                .width('100%')
+                .height(190)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(16)
+            }, (uri: string) => uri)
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(22)
+          .backgroundColor('#FCFAF5')
+          .borderRadius(24)
+          .onClick(() => {
+            this.driftPeek = false;
+          })
+        } else {
+          Column() {
+            this.buildPrimaryAction('捞起来看看', '#608FA0')
+          }
+          .onClick(() => {
+            this.driftPeek = true;
+          })
+          Text('打开看看不会结束漂流，也不会改变原信。')
+            .fontSize(12)
+            .fontColor('#82969C')
+            .width('100%')
+            .textAlign(TextAlign.Center)
+        }
+
+        Text('此刻的你，感觉怎样？')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#3E575D')
+          .width('100%')
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+          ForEach(['轻松些了', '仍有点难过', '平静了', '还说不清', '其他'], (mood: string, index: number) => {
+            Text(mood)
+            .fontSize(13)
+              .fontColor(this.driftMoodIndex === index ? '#FFFFFF' : '#507580')
+              .width('48%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 13, bottom: 13 })
+              .margin({ bottom: 10 })
+              .backgroundColor(this.driftMoodIndex === index ? '#608FA0' : '#E4EFF0')
+              .borderRadius(16)
+            .onClick(() => {
+                this.driftMoodIndex = index;
+                if (index !== 4) {
+                  this.driftCustomMood = '';
+                }
+              })
+          }, (mood: string) => mood)
+        }
+        if (this.driftMoodIndex === 4) {
+          Column({ space: 2 }) {
+            TextInput({ text: this.driftCustomMood, placeholder: '写下此刻更贴切的感觉' })
+              .width('100%')
+              .height(44)
+              .fontSize(14)
+              .fontColor('#3E575D')
+              .placeholderColor('#96A8A9')
+              .backgroundColor('#00FFFFFF')
+              .padding({ left: 2, right: 2 })
+              .maxLength(18)
+              .onChange((value: string) => {
+                this.driftCustomMood = value;
+              })
+            Divider()
+              .strokeWidth(1)
+              .color('#8DA9AD')
+          }
+          .width('100%')
+          .padding({ left: 4, right: 4, bottom: 6 })
+        }
+        Row() {
+          Blank()
+          Text(this.hasCurrentDriftMood() ? '把这封信带回岸边' : '先选此刻的心情')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+          Blank()
+        }
+        .width('100%')
+        .padding({ top: 14, bottom: 14 })
+        .backgroundColor(this.hasCurrentDriftMood() ? '#608FA0' : '#AFC6CC')
+        .borderRadius(18)
+        .onClick(() => {
+          if (this.hasCurrentDriftMood()) {
+            this.recallDriftLetter(this.getActiveEcho());
+          } else {
+            this.statusText = this.driftMoodIndex === 4 ? '写下此刻的感觉，再把信带回岸边。' : '先选一个此刻的心情，再把信带回岸边。';
+          }
+        })
+        Text('捡回时会保留正文、照片和这次心情的变化。')
+          .fontSize(12)
+          .fontColor('#82969C')
+          .width('100%')
+          .textAlign(TextAlign.Center)
+        Column() {
+          this.buildSecondaryAction(this.isDriftReturned(this.getActiveEcho()) ? '再次放回远海' : '先让它继续漂流')
+        }
+        .onClick(() => {
+          if (this.isDriftReturned(this.getActiveEcho())) {
+            this.continueDrift(this.getActiveEcho());
+          } else {
+            this.currentPage = 'driftSea';
+          }
+        })
+        Text('燃成光点 · 永久放下')
+          .fontSize(13)
+          .fontColor('#9A8279')
+          .padding({ top: 12, bottom: 12 })
+            .onClick(() => {
+              this.currentPage = 'driftSparkConfirm';
+            })
+        }
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 36 })
+      .opacity(this.driftDetailEntryOpacity)
+      .translate({ x: 0, y: this.driftDetailEntryOffset })
+      .onAppear(() => {
+        this.playDriftDetailEntryAnimation();
+      })
+    }
+  }
+
+  @Builder
+  private buildDriftSparkConfirm() {
+    Scroll() {
+      Column({ space: 18 }) {
+        this.buildBackHeader('让它化成光点？', '这一步不能撤回。')
+        Column({ space: 16 }) {
+          Text('✦')
+            .fontSize(58)
+            .fontColor('#D8AB80')
+          Text('漂流结束，留下这一点光')
+            .fontSize(21)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#3C3531')
+          Text('确认后，信的正文与照片会被永久清除。日期、情绪和温柔回声会留下，你可以把光点收入星空。')
+            .fontSize(14)
+            .lineHeight(24)
+            .fontColor('#7D746A')
+            .textAlign(TextAlign.Center)
+        }
+        .width('100%')
+        .padding(27)
+        .backgroundColor('#FBF7F1')
+        .borderRadius(28)
+        Column() {
+          this.buildPrimaryAction('确认化成光点', '#C99B72')
+        }
+        .onClick(() => {
+          this.convertDriftToSpark(this.getActiveEcho());
+        })
+        Column() {
+          this.buildSecondaryAction('让它再等等')
+        }
+        .onClick(() => {
+          this.currentPage = 'driftDetail';
+        })
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 30 })
     }
   }
 
@@ -2752,26 +3767,11 @@ struct Index {
           .fontSize(11)
           .fontColor(this.homeTab === 0 ? '#6E8EA9' : '#938A80')
       }
-      .width('25%')
+      .width('33.33%')
       .padding({ top: 6, bottom: 6 })
       .onClick(() => {
         this.homeTab = 0;
         this.currentPage = 'home';
-      })
-
-      Column({ space: 6 }) {
-        Text('✎')
-          .fontSize(18)
-          .fontColor('#938A80')
-        Text('写信')
-          .fontSize(11)
-          .fontColor('#938A80')
-      }
-      .width('25%')
-      .padding({ top: 6, bottom: 6 })
-      .onClick(() => {
-        this.resetComposer();
-        this.openComposer();
       })
 
       Column({ space: 6 }) {
@@ -2782,7 +3782,7 @@ struct Index {
           .fontSize(11)
           .fontColor(this.homeTab === 1 ? '#6E8EA9' : '#938A80')
       }
-      .width('25%')
+      .width('33.33%')
       .padding({ top: 6, bottom: 6 })
       .onClick(() => {
         this.homeTab = 1;
@@ -2797,7 +3797,7 @@ struct Index {
           .fontSize(11)
           .fontColor(this.homeTab === 2 ? '#6E8EA9' : '#938A80')
       }
-      .width('25%')
+      .width('33.33%')
       .padding({ top: 6, bottom: 6 })
       .onClick(() => {
         this.homeTab = 2;
@@ -2826,6 +3826,14 @@ struct Index {
           this.buildSparkConfirmPage()
         } else if (this.currentPage === 'futureSchedule') {
           this.buildFutureSchedulePage()
+        } else if (this.currentPage === 'sparkSky') {
+          this.buildSparkSky()
+        } else if (this.currentPage === 'driftSea') {
+          this.buildDriftSea()
+        } else if (this.currentPage === 'driftDetail') {
+          this.buildDriftDetail()
+        } else if (this.currentPage === 'driftSparkConfirm') {
+          this.buildDriftSparkConfirm()
         } else if (this.currentPage === 'archive') {
           this.buildArchivePage()
         } else {
