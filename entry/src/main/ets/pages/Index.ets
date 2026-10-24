@@ -210,6 +210,7 @@ struct Index {
   @State private futureNotificationEnabled: boolean = false;
   @State private unlockWatcherNow: number = Date.now();
   private unlockWatcherTimer: number = -1;
+  @State private isPendingSave: boolean = false;
 
   aboutToAppear(): void {
     if (BuildProfile.DEBUG) {
@@ -421,6 +422,17 @@ struct Index {
       })
       .catch((_err: BusinessError) => {
       });
+  }
+
+  private discardPendingRecord(): void {
+    if (!this.isPendingSave || this.activeEchoId === -1) {
+      return;
+    }
+    const targetId: number = this.activeEchoId;
+    this.sealedLetters = this.sealedLetters.filter((item: LetterRecord) => item.id !== targetId);
+    this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== targetId);
+    this.echoCards = this.echoCards.filter((item: LetterRecord) => item.id !== targetId);
+    this.isPendingSave = false;
   }
 
   private getServiceCardTodayLabel(): string {
@@ -1146,6 +1158,8 @@ struct Index {
         this.currentPage = targetPage;
         this.pageSlideOffset = 0;
         this.pageTransitioning = false;
+        this.initialDriftReceipt = false;
+        this.driftPeek = false;
       }
     }, () => {
       this.pageSlideOffset = 480;
@@ -1751,7 +1765,13 @@ struct Index {
     this.echoCards = [record, ...this.echoCards];
     this.activeEchoId = record.id;
     this.drafts = this.drafts.filter((item: LetterRecord) => item.content !== originalContent);
-    this.persistLetters();
+    
+    if (ritual.id === 'seal' || ritual.id === 'drift') {
+      this.isPendingSave = true;
+    } else {
+      this.persistLetters();
+    }
+
     if (ritual.id === 'drift') {
       this.enterEcho(record, 'ritual');
       this.initialDriftReceipt = true;
@@ -2293,6 +2313,7 @@ struct Index {
     this.recalledDriftOrigin = undefined;
     this.writingReturnPage = 'emotion';
     this.initialDriftReceipt = false;
+    this.isPendingSave = false;
     this.activeEchoId = record.id;
     this.driftPeek = false;
     this.driftMoodIndex = -1;
@@ -2718,14 +2739,14 @@ struct Index {
           } else if (this.currentPage === 'sparkConfirm') {
             this.navigateBack('ritual');
           } else if (this.currentPage === 'driftDetail') {
-            this.initialDriftReceipt = false;
-            this.driftPeek = false;
+            this.discardPendingRecord();
             this.navigateBack(this.contentReturnPage);
           } else if (this.currentPage === 'driftSparkConfirm') {
             this.navigateBack('driftDetail');
           } else if (this.currentPage === 'ritual') {
             this.navigateBack('writing');
           } else if (this.currentPage === 'echo') {
+            this.discardPendingRecord();
             this.navigateBack(this.contentReturnPage);
           } else if (this.currentPage === 'archive' ||
             this.currentPage === 'sparkSky' || this.currentPage === 'driftSea') {
@@ -3484,11 +3505,6 @@ struct Index {
                 .fontSize(14)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
-              if (this.writingPromptSource.length > 0) {
-                Text(this.writingPromptSource)
-                  .fontSize(11)
-                  .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
-              }
             }
             .alignItems(HorizontalAlign.Start)
             Blank()
@@ -3764,12 +3780,6 @@ struct Index {
             .onClick(() => {
               this.requestAfterglowIdeas();
             })
-
-            Text('按写信对象与心情从远端模板库组合，不读取或上传正文。')
-              .fontSize(11)
-              .lineHeight(18)
-              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
-              .width('100%')
 
             if (this.afterglowCandidates.length > 0) {
               Column({ space: 9 }) {
@@ -4074,10 +4084,10 @@ struct Index {
                 this.collectActiveSpark();
                 return;
               }
+              this.isPendingSave = false;
+              this.persistLetters();
               this.showHomeTab(1);
-              this.statusText = this.getActiveEcho().ritual === '燃成光点'
-                ? '这颗光点已经留在你的星空里。'
-                : '回声卡已经留在你的信箱里。';
+              this.statusText = '回声卡已经留在你的信箱里。';
             })
 
             Column() {
@@ -4478,6 +4488,8 @@ struct Index {
             }
             .onClick(() => {
               this.initialDriftReceipt = false;
+              this.isPendingSave = false;
+              this.persistLetters();
               this.showHomeTab(1);
               this.statusText = '回声卡已经保存到回声里了。';
             })
