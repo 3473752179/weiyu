@@ -1,0 +1,14 @@
+{
+  "name": "weiyu-remote-writing-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "start:emulator": "powershell -ExecutionPolicy Bypass -File ./start-emulator-service.ps1",
+    "test": "node --test server.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

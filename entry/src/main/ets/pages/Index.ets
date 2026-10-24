@@ -6,6 +6,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { formBindingData, formProvider } from '@kit.FormKit';
 import { WeiyuTheme } from '../theme/WeiyuTheme';
+import { AfterglowResponse, RemoteWritingService, WritingPromptResponse } from '../services/RemoteWritingService';
+import BuildProfile from 'BuildProfile';
 
 interface SelectItem {
   id: string;
@@ -30,6 +32,9 @@ interface LetterRecord {
   keywords: Array<string>;
   echoLine: string;
   afterglow?: string;
+  afterglowEcho?: string;
+  // 兼容升级前已经保存在本地的字段。
+  aiEcho?: string;
   moodTag: string;
   anonymous: boolean;
   unlockDate: string;
@@ -56,13 +61,40 @@ interface ServiceCardData {
   hasLetter: boolean;
   date: string;
   emotionAndRitual: string;
+  eyebrow: string;
+  headline: string;
   content: string;
+  actionLabel: string;
   target: string;
+}
+
+interface ServiceCardPreviewOption {
+  id: string;
+  title: string;
+  subtitle: string;
+}
+
+interface WritingPromptCache {
+  contextKey: string;
+  id: string;
+  prompt: string;
+  matchedBy: string;
 }
 
 @Entry
 @Component
 struct Index {
+  private readonly serviceCardPreviewOptions: Array<ServiceCardPreviewOption> = [
+    { id: 'auto', title: '自动推荐', subtitle: '恢复真实推荐逻辑' },
+    { id: 'morning', title: '晨间邀请', subtitle: '给今天留一句话' },
+    { id: 'daytime', title: '白天停靠', subtitle: '现在的你，还好吗？' },
+    { id: 'evening', title: '夜晚留白', subtitle: '有些话，写下来就会轻一点' },
+    { id: 'future', title: '未来信抵达', subtitle: '未来的你，有一封信到了' },
+    { id: 'driftReturned', title: '漂流信靠岸', subtitle: '那封漂流的信，想回来见你' },
+    { id: 'sparkPending', title: '待收下的光点', subtitle: '把这点微光，留给往后的自己' },
+    { id: 'driftFollowup', title: '漂流回访', subtitle: '写完以后，现在好一点了吗？' },
+    { id: 'letterFollowup', title: '信件回访', subtitle: '给那天的自己一声回应' }
+  ];
   private readonly recipientOptions: Array<SelectItem> = [
     { id: 'self', title: '写给自己', subtitle: '给此刻的自己一点温柔', emoji: '🪞', color: '#F4EEE5' },
     { id: 'someone', title: '写给某个人', subtitle: '给那个TA，说说心里话', emoji: '💌', color: '#F7F1E6' },
@@ -88,12 +120,15 @@ struct Index {
   ];
   private readonly letterStoreName: string = 'weiyu_letter_store';
   private readonly letterStoreKey: string = 'letters_payload';
+  private readonly serviceCardPreviewKey: string = 'service_card_preview_scene';
+  private readonly writingPromptCacheKey: string = 'remote_writing_prompt_cache';
   private readonly futureReminderHour: number = 9;
   private readonly appBundleName: string = 'com.example.weiyu';
 
   @State private currentPage: string = 'home';
   @StorageLink('cardTarget') @Watch('onCardTargetChanged') private cardTarget: string = '';
   @State private homeTab: number = 0;
+  @State private serviceCardPreviewScene: string = 'auto';
   @State private echoTimeFilter: string = 'all';
   @State private archiveKind: string = 'draft';
   @State private archiveReturnPage: string = 'home';
@@ -105,6 +140,19 @@ struct Index {
   @State private letterTitle: string = '';
   @State private letterContent: string = '';
   @State private sparkAfterglow: string = '';
+  @State private writingPrompt: string = '';
+  @State private writingPromptId: string = '';
+  @State private writingPromptContextKey: string = '';
+  @State private writingPromptLoading: boolean = false;
+  @State private writingPromptSource: string = '';
+  @State private writingPromptError: string = '';
+  private writingPromptRecentIds: Array<string> = [];
+  @State private afterglowLoading: boolean = false;
+  @State private afterglowError: string = '';
+  @State private afterglowCandidates: Array<string> = [];
+  @State private afterglowKeywords: Array<string> = [];
+  @State private afterglowEcho: string = '';
+  private afterglowRecentCandidates: Array<string> = [];
   @State private photoUris: Array<string> = [];
   @State private moodTag: string = '私语';
   @State private isAnonymous: boolean = false;
@@ -127,8 +175,6 @@ struct Index {
   @State private driftPeek: boolean = false;
   @State private driftMoodIndex: number = -1;
   @State private driftCustomMood: string = '';
-  @State private driftDetailEntryOffset: number = 18;
-  @State private driftDetailEntryOpacity: number = 0;
   @State private initialDriftReceipt: boolean = false;
   @State private contentReturnPage: string = 'home';
   @State private driftLaunching: boolean = false;
@@ -144,17 +190,12 @@ struct Index {
   @State private driftHedgehogFrameIndex: number = 0;
   private driftHedgehogFrameTimer: number = -1;
   @State private openedMenuId: number = -1;
-  @State private homeEntryOffset: number = 18;
-  @State private homeEntryOpacity: number = 0;
-  @State private recentEntryOffset: number = 18;
-  @State private recentEntryOpacity: number = 0;
-  @State private recipientPageOffset: number = 480;
-  private recipientPageLeaving: boolean = false;
-  private recipientEntryFromHome: boolean = false;
-  @State private emotionEntryOffset: number = 18;
-  @State private emotionEntryOpacity: number = 0;
-  @State private ritualEntryOffset: number = 18;
-  @State private ritualEntryOpacity: number = 0;
+  @State private pageSlideOffset: number = 0;
+  private pageTransitioning: boolean = false;
+  private pageHistory: Array<string> = [];
+  @State private homeTabContentOffset: number = 0;
+  @State private homeTabContentOpacity: number = 1;
+  private homeTabTransitioning: boolean = false;
   @State private confusedEmotionFrameIndex: number = 0;
   private confusedEmotionTimer: number = -1;
   @State private regretEmotionFrameIndex: number = 0;
@@ -171,6 +212,9 @@ struct Index {
   private unlockWatcherTimer: number = -1;
 
   aboutToAppear(): void {
+    if (BuildProfile.DEBUG) {
+      this.restoreServiceCardPreviewScene();
+    }
     this.startUnlockWatcher();
     this.refreshNotificationPermissionStatus();
     if (this.initialized) {
@@ -257,6 +301,45 @@ struct Index {
     }
   }
 
+  private restoreServiceCardPreviewScene(): void {
+    const store: preferences.Preferences | null = this.getLetterStore();
+    if (store === null) {
+      return;
+    }
+    this.serviceCardPreviewScene = store.getSync(this.serviceCardPreviewKey, 'auto') as string;
+  }
+
+  private selectServiceCardPreviewScene(scene: string): void {
+    if (!BuildProfile.DEBUG) {
+      return;
+    }
+    const store: preferences.Preferences | null = this.getLetterStore();
+    if (store === null) {
+      return;
+    }
+    this.serviceCardPreviewScene = scene;
+    store.putSync(this.serviceCardPreviewKey, scene);
+    store.flush()
+      .then(() => {
+        this.refreshServiceCards();
+        this.statusText = scene === 'auto' ? '服务卡片已恢复自动推荐。' : '预览场景已经同步到桌面卡片。';
+      })
+      .catch((_err: BusinessError) => {
+        this.statusText = '卡片预览切换失败，请再试一次。';
+      });
+  }
+
+  private getServiceCardPreviewTitle(): string {
+    let index: number = 0;
+    while (index < this.serviceCardPreviewOptions.length) {
+      if (this.serviceCardPreviewOptions[index].id === this.serviceCardPreviewScene) {
+        return this.serviceCardPreviewOptions[index].title;
+      }
+      index += 1;
+    }
+    return '自动推荐';
+  }
+
   private normalizeRecord(record: LetterRecord): LetterRecord {
     return {
       id: record.id,
@@ -273,6 +356,8 @@ struct Index {
       keywords: record.keywords,
       echoLine: record.echoLine,
       afterglow: record.afterglow ?? '',
+      afterglowEcho: record.afterglowEcho ?? record.aiEcho ?? '',
+      aiEcho: record.aiEcho ?? '',
       moodTag: record.moodTag,
       anonymous: record.anonymous,
       unlockDate: record.unlockDate ?? '',
@@ -338,6 +423,238 @@ struct Index {
       });
   }
 
+  private getServiceCardTodayLabel(): string {
+    const now: Date = new Date();
+    return `${now.getMonth() + 1}月${now.getDate()}日`;
+  }
+
+  private getServiceCardText(value: string | undefined, fallback: string, limit: number): string {
+    const source: string = (value ?? '').replace(/\s+/g, ' ').trim();
+    const text: string = source.length > 0 ? source : fallback;
+    return text.length > limit ? `${text.slice(0, limit)}…` : text;
+  }
+
+  private createPreviewServiceCard(scene: string): ServiceCardData {
+    if (scene === 'morning') {
+      return {
+        hasLetter: false, date: '今天', emotionAndRitual: '晨间片刻', eyebrow: '早安，今天也慢慢来',
+        headline: '给今天留一句话', content: '不必写得完整，从醒来后的第一个感受开始。',
+        actionLabel: '写下此刻', target: 'cardPreview'
+      };
+    }
+    if (scene === 'evening') {
+      return {
+        hasLetter: false, date: '今晚', emotionAndRitual: '夜晚留白', eyebrow: '今晚，留一点空白',
+        headline: '有些话，写下来就会轻一点', content: '不用急着想明白，先写下最想说的那一句。',
+        actionLabel: '写下此刻', target: 'cardPreview'
+      };
+    }
+    if (scene === 'future') {
+      return {
+        hasLetter: true, date: '刚刚', emotionAndRitual: '平静 · 未来信', eyebrow: '未来信刚刚抵达',
+        headline: '未来的你，有一封信到了', content: '那天留给未来的话，现在可以打开了。',
+        actionLabel: '现在打开', target: 'cardPreview'
+      };
+    }
+    if (scene === 'driftReturned') {
+      return {
+        hasLetter: true, date: '今天', emotionAndRitual: '释然 · 近岸轻漂', eyebrow: '海风把它送回岸边',
+        headline: '那封漂流的信，想回来见你', content: '它已经靠岸，等你决定要不要重新打开。',
+        actionLabel: '去岸边看看', target: 'cardPreview'
+      };
+    }
+    if (scene === 'sparkPending') {
+      return {
+        hasLetter: true, date: '昨夜', emotionAndRitual: '遗憾 · 微光', eyebrow: '有一束光还没被收下',
+        headline: '把这点微光，留给往后的自己', content: '愿那些没有说完的话，也能被温柔照亮。',
+        actionLabel: '收下这束光', target: 'cardPreview'
+      };
+    }
+    if (scene === 'driftFollowup') {
+      return {
+        hasLetter: true, date: '漂流第 2 天', emotionAndRitual: '迷茫 · 漂流中', eyebrow: '海风仍在替你保管',
+        headline: '写完以后，现在好一点了吗？', content: '那件心事还在慢慢漂流，你可以靠近看看。',
+        actionLabel: '靠近看看', target: 'cardPreview'
+      };
+    }
+    if (scene === 'letterFollowup') {
+      return {
+        hasLetter: true, date: '3 天前', emotionAndRitual: '难过 · 温柔回访', eyebrow: '给那天的自己一声回应',
+        headline: '写完那封信以后，现在怎么样？', content: '难过的那一天，已经过去了一点时间。',
+        actionLabel: '回去看看', target: 'cardPreview'
+      };
+    }
+    return {
+      hasLetter: false, date: '今天', emotionAndRitual: '片刻停靠', eyebrow: '给忙碌按一次暂停',
+      headline: '现在的你，还好吗？', content: '用一句话，把此刻从忙碌里轻轻取出来。',
+      actionLabel: '写下此刻', target: 'cardPreview'
+    };
+  }
+
+  private createWritingServiceCard(): ServiceCardData {
+    const hour: number = new Date().getHours();
+    if (hour < 11) {
+      return {
+        hasLetter: false,
+        date: this.getServiceCardTodayLabel(),
+        emotionAndRitual: '晨间片刻',
+        eyebrow: '早安，今天也慢慢来',
+        headline: '给今天留一句话',
+        content: '不必写得完整，从醒来后的第一个感受开始。',
+        actionLabel: '写下此刻',
+        target: 'write'
+      };
+    }
+    if (hour < 18) {
+      return {
+        hasLetter: false,
+        date: this.getServiceCardTodayLabel(),
+        emotionAndRitual: '片刻停靠',
+        eyebrow: '给忙碌按一次暂停',
+        headline: '现在的你，还好吗？',
+        content: '用一句话，把此刻从忙碌里轻轻取出来。',
+        actionLabel: '写下此刻',
+        target: 'write'
+      };
+    }
+    return {
+      hasLetter: false,
+      date: this.getServiceCardTodayLabel(),
+      emotionAndRitual: '夜晚留白',
+      eyebrow: '今晚，留一点空白',
+      headline: '有些话，写下来就会轻一点',
+      content: '不用急着想明白，先写下最想说的那一句。',
+      actionLabel: '写下此刻',
+      target: 'write'
+    };
+  }
+
+  private createRecommendedServiceCard(): ServiceCardData {
+    const now: number = Date.now();
+    const dayDuration: number = 24 * 60 * 60 * 1000;
+    let unlockedFuture: LetterRecord | undefined = undefined;
+    let index: number = 0;
+    while (index < this.futureLetters.length) {
+      const letter: LetterRecord = this.futureLetters[index];
+      if (letter.unlockAt > 0 && letter.unlockAt <= now && now - letter.unlockAt <= dayDuration * 3 &&
+        (unlockedFuture === undefined || letter.unlockAt > unlockedFuture.unlockAt)) {
+        unlockedFuture = letter;
+      }
+      index += 1;
+    }
+    if (unlockedFuture !== undefined) {
+      return {
+        hasLetter: true,
+        date: unlockedFuture.date,
+        emotionAndRitual: `${unlockedFuture.emotion} · 未来信`,
+        eyebrow: '未来信刚刚抵达',
+        headline: '未来的你，有一封信到了',
+        content: this.getServiceCardText(unlockedFuture.title, '那天留给未来的话，现在可以打开了。', 42),
+        actionLabel: '现在打开',
+        target: `letter:${unlockedFuture.id}`
+      };
+    }
+
+    let returnedDrift: LetterRecord | undefined = undefined;
+    index = 0;
+    while (index < this.driftLetters.length) {
+      const letter: LetterRecord = this.driftLetters[index];
+      const tideAt: number = letter.driftTideAt ?? 0;
+      if (tideAt > 0 && tideAt <= now &&
+        (returnedDrift === undefined || tideAt > (returnedDrift.driftTideAt ?? 0))) {
+        returnedDrift = letter;
+      }
+      index += 1;
+    }
+    if (returnedDrift !== undefined) {
+      return {
+        hasLetter: true,
+        date: returnedDrift.date,
+        emotionAndRitual: `${returnedDrift.emotion} · 近岸轻漂`,
+        eyebrow: '海风把它送回岸边',
+        headline: '那封漂流的信，想回来见你',
+        content: this.getDriftSafeLine(returnedDrift),
+        actionLabel: '去岸边看看',
+        target: `letter:${returnedDrift.id}`
+      };
+    }
+
+    let pendingSpark: LetterRecord | undefined = undefined;
+    index = 0;
+    while (index < this.echoCards.length) {
+      const letter: LetterRecord = this.echoCards[index];
+      if (letter.ritual === '燃成光点' && this.collectedSparkIds.indexOf(letter.id) === -1) {
+        pendingSpark = letter;
+        break;
+      }
+      index += 1;
+    }
+    if (pendingSpark !== undefined) {
+      return {
+        hasLetter: true,
+        date: pendingSpark.date,
+        emotionAndRitual: `${pendingSpark.emotion} · 微光`,
+        eyebrow: '有一束光还没被收下',
+        headline: '把这点微光，留给往后的自己',
+        content: this.getServiceCardText(pendingSpark.afterglow,
+          this.getServiceCardText(pendingSpark.echoLine, '这一刻的心情，已经化作一束光。', 42), 42),
+        actionLabel: '收下这束光',
+        target: `letter:${pendingSpark.id}`
+      };
+    }
+
+    let driftingLetter: LetterRecord | undefined = undefined;
+    index = 0;
+    while (index < this.driftLetters.length) {
+      const letter: LetterRecord = this.driftLetters[index];
+      if (letter.driftStartedAt > 0 && now - letter.driftStartedAt >= dayDuration &&
+        (driftingLetter === undefined || letter.driftStartedAt > driftingLetter.driftStartedAt)) {
+        driftingLetter = letter;
+      }
+      index += 1;
+    }
+    if (driftingLetter !== undefined) {
+      return {
+        hasLetter: true,
+        date: driftingLetter.date,
+        emotionAndRitual: `${driftingLetter.emotion} · 漂流中`,
+        eyebrow: '海风仍在替你保管',
+        headline: '写完以后，现在好一点了吗？',
+        content: this.getDriftJourneyLine(driftingLetter),
+        actionLabel: '靠近看看',
+        target: `letter:${driftingLetter.id}`
+      };
+    }
+
+    let recentLetter: LetterRecord | undefined = undefined;
+    let recentTimestamp: number = 0;
+    index = 0;
+    while (index < this.echoCards.length) {
+      const letter: LetterRecord = this.echoCards[index];
+      const timestamp: number = this.getRecordTimestamp(letter);
+      if (timestamp > 0 && now - timestamp >= dayDuration && now - timestamp <= dayDuration * 7 &&
+        timestamp > recentTimestamp) {
+        recentLetter = letter;
+        recentTimestamp = timestamp;
+      }
+      index += 1;
+    }
+    if (recentLetter !== undefined) {
+      return {
+        hasLetter: true,
+        date: recentLetter.date,
+        emotionAndRitual: `${recentLetter.emotion} · 温柔回访`,
+        eyebrow: '给那天的自己一声回应',
+        headline: '写完那封信以后，现在怎么样？',
+        content: this.getServiceCardText(recentLetter.title, `${recentLetter.emotion}的那一天，已经过去了一点时间。`, 42),
+        actionLabel: '回去看看',
+        target: `letter:${recentLetter.id}`
+      };
+    }
+
+    return this.createWritingServiceCard();
+  }
+
   private refreshServiceCards(): void {
     const store: preferences.Preferences | null = this.getLetterStore();
     if (store === null) {
@@ -354,23 +671,8 @@ struct Index {
       return;
     }
 
-    let data: ServiceCardData = {
-      hasLetter: false,
-      date: '微语',
-      emotionAndRitual: '给此刻留一点空间',
-      content: '最近，有没有什么想写下来的？',
-      target: 'write'
-    };
-    if (this.echoCards.length > 0) {
-      const letter: LetterRecord = this.echoCards[0];
-      data = {
-        hasLetter: true,
-        date: letter.date,
-        emotionAndRitual: `${letter.emotion} · ${letter.ritual}`,
-        content: letter.ritual === '漂流' ? this.getDriftSafeLine(letter) : (letter.ritual === '燃成光点' ? letter.echoLine : this.createSoftExcerpt(letter.content, 46)),
-        target: `letter:${letter.id}`
-      };
-    }
+    const data: ServiceCardData = BuildProfile.DEBUG && this.serviceCardPreviewScene !== 'auto'
+      ? this.createPreviewServiceCard(this.serviceCardPreviewScene) : this.createRecommendedServiceCard();
     const cardData: formBindingData.FormBindingData = formBindingData.createFormBindingData(data);
     formIds.forEach((formId: string) => {
       formProvider.updateForm(formId, cardData).catch((_err: BusinessError) => {
@@ -392,6 +694,11 @@ struct Index {
       this.openComposer();
       return;
     }
+    if (target === 'cardPreview' && BuildProfile.DEBUG) {
+      this.homeTab = 2;
+      this.navigateImmediately('serviceCardPreview');
+      return;
+    }
     if (target.startsWith('letter:')) {
       const targetId: number = Number(target.slice(7));
       let index: number = 0;
@@ -402,7 +709,7 @@ struct Index {
         }
         index += 1;
       }
-      this.currentPage = 'home';
+      this.navigateImmediately('home');
       this.homeTab = 0;
     }
   }
@@ -461,6 +768,196 @@ struct Index {
       };
     }
     return this.emotionOptions[this.selectedEmotionIndex];
+  }
+
+  private getWritingPromptContextKey(): string {
+    return `${this.getSelectedRecipient().title}|${this.getSelectedEmotion().title}`;
+  }
+
+  private getLocalWritingPrompt(): string {
+    const emotion: string = this.getSelectedEmotion().title;
+    if (emotion.indexOf('遗憾') >= 0 || emotion.indexOf('后悔') >= 0 || emotion.indexOf('失落') >= 0) {
+      return '如果可以把那一刻重新说一遍，你最想补上哪句话？';
+    }
+    if (emotion.indexOf('生气') >= 0 || emotion.indexOf('不甘') >= 0 || emotion.indexOf('烦') >= 0) {
+      return '先不急着原谅或理解，真正让你难受的是什么？';
+    }
+    if (emotion.indexOf('开心') >= 0 || emotion.indexOf('期待') >= 0) {
+      return '如果要替今天保存一个画面，你会留下哪一幕？';
+    }
+    if (emotion.indexOf('伤心') >= 0 || emotion.indexOf('难过') >= 0) {
+      return '此刻最希望被理解的那部分，是什么？';
+    }
+    if (emotion.indexOf('迷茫') >= 0 || emotion.indexOf('说不清') >= 0) {
+      return '不必现在找到答案，先写下最让你犹豫的那件事。';
+    }
+    return '如果这封信不会被评价，你现在最想诚实写下什么？';
+  }
+
+  private restoreWritingPromptCache(contextKey: string): boolean {
+    const store: preferences.Preferences | null = this.getLetterStore();
+    if (store === null) {
+      return false;
+    }
+    const raw: string = store.getSync(this.writingPromptCacheKey, '') as string;
+    if (raw.length === 0) {
+      return false;
+    }
+    try {
+      const cached: WritingPromptCache = JSON.parse(raw) as WritingPromptCache;
+      if (cached.contextKey !== contextKey || cached.prompt.trim().length === 0) {
+        return false;
+      }
+      this.writingPrompt = cached.prompt;
+      this.writingPromptId = cached.id;
+      this.writingPromptContextKey = contextKey;
+      this.writingPromptSource = '上次获取的提示';
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private saveWritingPromptCache(contextKey: string, response: WritingPromptResponse): void {
+    const store: preferences.Preferences | null = this.getLetterStore();
+    if (store === null) {
+      return;
+    }
+    const cached: WritingPromptCache = {
+      contextKey: contextKey,
+      id: response.id,
+      prompt: response.prompt,
+      matchedBy: response.matchedBy
+    };
+    store.putSync(this.writingPromptCacheKey, JSON.stringify(cached));
+    store.flush().catch((_err: BusinessError) => {
+    });
+  }
+
+  private getPromptSourceLabel(matchedBy: string): string {
+    if (matchedBy === 'exact') {
+      return '为这个对象与心情找到的提示';
+    }
+    if (matchedBy === 'category') {
+      return '根据对象与心情匹配';
+    }
+    if (matchedBy === 'recipient_only') {
+      return '根据写信对象匹配';
+    }
+    if (matchedBy === 'emotion_only') {
+      return '根据此刻心情匹配';
+    }
+    return '一条温柔的通用提示';
+  }
+
+  private async loadWritingPrompt(forceRefresh: boolean = false): Promise<void> {
+    if (this.writingPromptLoading) {
+      return;
+    }
+    const contextKey: string = this.getWritingPromptContextKey();
+    if (this.writingPromptContextKey.length > 0 && this.writingPromptContextKey !== contextKey) {
+      this.writingPromptRecentIds = [];
+    }
+    const hasCache: boolean = !forceRefresh && this.restoreWritingPromptCache(contextKey);
+    if (hasCache && this.writingPromptId.length > 0 && this.writingPromptRecentIds.indexOf(this.writingPromptId) < 0) {
+      this.writingPromptRecentIds = [...this.writingPromptRecentIds, this.writingPromptId].slice(-8);
+    }
+    if (forceRefresh && this.writingPromptId.length > 0 && this.writingPromptRecentIds.indexOf(this.writingPromptId) < 0) {
+      this.writingPromptRecentIds = [...this.writingPromptRecentIds, this.writingPromptId].slice(-8);
+    }
+    if (!hasCache) {
+      this.writingPrompt = '';
+      this.writingPromptSource = '';
+    }
+    this.writingPromptLoading = true;
+    this.writingPromptError = '';
+    try {
+      const recipientPreset: string = this.selectedRecipientIndex >= 0
+        ? this.recipientOptions[this.selectedRecipientIndex].id : 'self';
+      const emotionPreset: string = this.selectedEmotionIndex >= 0
+        ? this.emotionOptions[this.selectedEmotionIndex].id : 'sad';
+      const response: WritingPromptResponse = await RemoteWritingService.matchWritingPrompt({
+        recipientLabel: this.getSelectedRecipient().title,
+        recipientPreset: recipientPreset,
+        emotionLabel: this.getSelectedEmotion().title,
+        emotionPreset: emotionPreset,
+        excludePromptIds: [...this.writingPromptRecentIds],
+        variationSeed: `${Date.now()}`
+      });
+      if (response.prompt.trim().length === 0) {
+        throw new Error('PROMPT_EMPTY');
+      }
+      this.writingPrompt = response.prompt.trim();
+      this.writingPromptId = response.id;
+      this.writingPromptContextKey = contextKey;
+      if (this.writingPromptRecentIds.indexOf(response.id) < 0) {
+        this.writingPromptRecentIds = [...this.writingPromptRecentIds, response.id].slice(-8);
+      }
+      this.writingPromptSource = this.getPromptSourceLabel(response.matchedBy);
+      this.saveWritingPromptCache(contextKey, response);
+    } catch (_err) {
+      if (!hasCache && this.writingPrompt.length === 0) {
+        this.writingPrompt = this.getLocalWritingPrompt();
+        this.writingPromptId = 'local-fallback';
+        this.writingPromptContextKey = contextKey;
+        this.writingPromptSource = '离线提示';
+      }
+      this.writingPromptError = '暂时没有连上海风，已为你保留可用的本地提示。';
+    } finally {
+      this.writingPromptLoading = false;
+    }
+  }
+
+  private async requestAfterglowIdeas(): Promise<void> {
+    if (this.afterglowLoading) {
+      return;
+    }
+    this.afterglowLoading = true;
+    this.afterglowError = '';
+    const recipientPreset: string = this.selectedRecipientIndex >= 0
+      ? this.recipientOptions[this.selectedRecipientIndex].id : 'self';
+    const emotionPreset: string = this.selectedEmotionIndex >= 0
+      ? this.emotionOptions[this.selectedEmotionIndex].id : 'sad';
+    try {
+      const response: AfterglowResponse = await RemoteWritingService.generateAfterglow({
+        recipient: this.getSelectedRecipient().title,
+        recipientPreset: recipientPreset,
+        emotion: this.getSelectedEmotion().title,
+        emotionPreset: emotionPreset,
+        title: this.letterTitle.trim(),
+        variationSeed: `${Date.now()}`,
+        excludeCandidates: [...this.afterglowRecentCandidates]
+      });
+      const candidates: Array<string> = response.candidates
+        .map((item: string) => item.trim().slice(0, 50))
+        .filter((item: string) => item.length > 0)
+        .slice(0, 3);
+      if (candidates.length === 0) {
+        throw new Error('AFTERGLOW_EMPTY');
+      }
+      this.afterglowCandidates = candidates;
+      let recentCandidates: Array<string> = [...this.afterglowRecentCandidates];
+      candidates.forEach((candidate: string) => {
+        if (recentCandidates.indexOf(candidate) < 0) {
+          recentCandidates.push(candidate);
+        }
+      });
+      this.afterglowRecentCandidates = recentCandidates.slice(-9);
+      this.afterglowKeywords = response.keywords
+        .map((item: string) => item.trim().slice(0, 6))
+        .filter((item: string) => item.length > 0)
+        .slice(0, 4);
+      this.afterglowEcho = response.echo.trim().slice(0, 45);
+    } catch (_err) {
+      this.afterglowError = '暂时没有连上余光灵感库。你仍可以自己写下这句话，或稍后重试。';
+    } finally {
+      this.afterglowLoading = false;
+    }
+  }
+
+  private selectAfterglowCandidate(candidate: string): void {
+    this.sparkAfterglow = candidate.slice(0, 50);
+    this.statusText = '这句话已经放进余光里，你还可以继续修改。';
   }
 
   private getActiveEcho(): LetterRecord {
@@ -606,92 +1103,146 @@ struct Index {
     }
   }
 
-  private playHomeEntryAnimation(): void {
-    this.homeEntryOpacity = 0;
-    this.homeEntryOffset = 18;
-    setTimeout(() => {
-      animateTo({
-        duration: 480,
-        curve: Curve.EaseOut
-      }, () => {
-        this.homeEntryOpacity = 1;
-        this.homeEntryOffset = 0;
-      });
-    }, 60);
-  }
-
-  private playRecentEntryAnimation(): void {
-    this.recentEntryOpacity = 0;
-    this.recentEntryOffset = 18;
-    setTimeout(() => {
-      animateTo({
-        duration: 480,
-        curve: Curve.EaseOut
-      }, () => {
-        this.recentEntryOpacity = 1;
-        this.recentEntryOffset = 0;
-      });
-    }, 150);
-  }
-
-  private playRecipientEntryAnimation(): void {
-    this.recipientPageLeaving = false;
-    this.recipientPageOffset = 480;
-    setTimeout(() => {
-      animateTo({
-        duration: 360,
-        curve: Curve.EaseOut
-      }, () => {
-        this.recipientPageOffset = 0;
-      });
-    }, 20);
-  }
-
-  private playRecipientExitAnimation(): void {
-    if (this.recipientPageLeaving) {
+  private navigateForward(targetPage: string): void {
+    if (this.currentPage === targetPage || this.pageTransitioning) {
       return;
     }
-    this.recipientPageLeaving = true;
-    animateTo({
-      duration: 300,
+    const historyIndex: number = this.pageHistory.lastIndexOf(targetPage);
+    if (historyIndex >= 0) {
+      this.pageHistory = this.pageHistory.slice(0, historyIndex);
+      this.startBackTransition(targetPage);
+      return;
+    }
+    this.pageHistory.push(this.currentPage);
+    this.startForwardTransition(targetPage);
+  }
+
+  private startForwardTransition(targetPage: string): void {
+    this.pageTransitioning = true;
+    this.pageSlideOffset = 480;
+    this.currentPage = targetPage;
+    setTimeout(() => {
+      this.getUIContext().animateTo({
+        duration: 340,
+        curve: Curve.EaseOut,
+        onFinish: () => {
+          this.pageTransitioning = false;
+        }
+      }, () => {
+        this.pageSlideOffset = 0;
+      });
+    }, 16);
+  }
+
+  private startBackTransition(targetPage: string): void {
+    if (this.pageTransitioning) {
+      return;
+    }
+    this.pageTransitioning = true;
+    this.getUIContext().animateTo({
+      duration: 280,
       curve: Curve.EaseIn,
       onFinish: () => {
-        this.currentPage = 'home';
-        this.homeTab = 0;
-        this.recipientPageOffset = 480;
-        this.recipientPageLeaving = false;
+        this.currentPage = targetPage;
+        this.pageSlideOffset = 0;
+        this.pageTransitioning = false;
       }
     }, () => {
-      this.recipientPageOffset = 480;
+      this.pageSlideOffset = 480;
     });
   }
 
-  private playEmotionEntryAnimation(): void {
-    this.emotionEntryOpacity = 0;
-    this.emotionEntryOffset = 18;
-    setTimeout(() => {
-      animateTo({
-        duration: 480,
-        curve: Curve.EaseOut
-      }, () => {
-        this.emotionEntryOpacity = 1;
-        this.emotionEntryOffset = 0;
-      });
-    }, 60);
+  private navigateBack(fallbackPage: string = 'home'): void {
+    if (this.pageTransitioning) {
+      return;
+    }
+    const targetPage: string = this.pageHistory.length > 0
+      ? this.pageHistory.pop() as string : fallbackPage;
+    if (this.currentPage === targetPage) {
+      return;
+    }
+    this.startBackTransition(targetPage);
   }
 
-  private playDriftDetailEntryAnimation(): void {
-    this.driftDetailEntryOpacity = 0;
-    this.driftDetailEntryOffset = 18;
-    setTimeout(() => {
-      animateTo({
-        duration: 480,
-        curve: Curve.EaseOut
-      }, () => {
-        this.driftDetailEntryOpacity = 1;
-        this.driftDetailEntryOffset = 0;
-      });
-    }, 60);
+  private navigateWithReturn(targetPage: string, returnPage: string): void {
+    if (this.currentPage === targetPage || this.pageTransitioning) {
+      return;
+    }
+    const historyIndex: number = this.pageHistory.lastIndexOf(returnPage);
+    if (returnPage === this.currentPage) {
+      this.pageHistory.push(returnPage);
+    } else if (historyIndex >= 0) {
+      this.pageHistory = this.pageHistory.slice(0, historyIndex + 1);
+    } else {
+      this.pageHistory.push(returnPage);
+    }
+    this.startForwardTransition(targetPage);
+  }
+
+  private navigateToRoot(targetPage: string = 'home'): void {
+    if (this.pageTransitioning) {
+      return;
+    }
+    this.pageHistory = [];
+    if (this.currentPage === targetPage) {
+      this.resetPageTransition();
+      return;
+    }
+    this.startBackTransition(targetPage);
+  }
+
+  private switchHomeTab(index: number): void {
+    if (this.homeTab === index || this.homeTabTransitioning) {
+      return;
+    }
+    const direction: number = index > this.homeTab ? 1 : -1;
+    this.homeTabTransitioning = true;
+    this.getUIContext().animateTo({
+      duration: 110,
+      curve: Curve.EaseIn,
+      onFinish: () => {
+        this.homeTab = index;
+        this.homeTabContentOffset = 10 * direction;
+        this.getUIContext().animateTo({
+          duration: 190,
+          curve: Curve.EaseOut,
+          onFinish: () => {
+            this.homeTabTransitioning = false;
+          }
+        }, () => {
+          this.homeTabContentOpacity = 1;
+          this.homeTabContentOffset = 0;
+        });
+      }
+    }, () => {
+      this.homeTabContentOpacity = 0.62;
+      this.homeTabContentOffset = -8 * direction;
+    });
+  }
+
+  private showHomeTab(index: number): void {
+    if (this.pageTransitioning) {
+      return;
+    }
+    this.homeTab = index;
+    this.homeTabContentOpacity = 1;
+    this.homeTabContentOffset = 0;
+    this.pageHistory = [];
+    if (this.currentPage === 'home') {
+      return;
+    }
+    this.navigateToRoot('home');
+  }
+
+  private resetPageTransition(): void {
+    this.pageSlideOffset = 0;
+    this.pageTransitioning = false;
+  }
+
+  private navigateImmediately(targetPage: string): void {
+    this.resetPageTransition();
+    this.pageHistory = [];
+    this.currentPage = targetPage;
   }
 
   private startConfusedEmotionAnimation(): void {
@@ -872,25 +1423,10 @@ struct Index {
     }
   }
 
-  private playRitualEntryAnimation(): void {
-    this.ritualEntryOpacity = 0;
-    this.ritualEntryOffset = 18;
-    setTimeout(() => {
-      animateTo({
-        duration: 480,
-        curve: Curve.EaseOut
-      }, () => {
-        this.ritualEntryOpacity = 1;
-        this.ritualEntryOffset = 0;
-      });
-    }, 60);
-  }
-
   private openComposer(): void {
     this.homeTab = 0;
     this.resetComposer();
-    this.recipientEntryFromHome = true;
-    this.currentPage = 'recipient';
+    this.navigateForward('recipient');
     this.statusText = '先决定，这封信想写给谁。';
   }
 
@@ -898,7 +1434,7 @@ struct Index {
     this.archiveReturnPage = this.currentPage;
     this.archiveKind = kind;
     this.selectedSparkId = -1;
-    this.currentPage = kind === 'spark' ? 'sparkSky' : (kind === 'drift' ? 'driftSea' : 'archive');
+    this.navigateForward(kind === 'spark' ? 'sparkSky' : (kind === 'drift' ? 'driftSea' : 'archive'));
   }
 
   private chooseRecipient(index: number): void {
@@ -913,7 +1449,7 @@ struct Index {
       return;
     }
     this.customRecipient = '';
-    this.currentPage = 'emotion';
+    this.navigateForward('emotion');
     this.statusText = '再选一张情绪信纸，把心情放上去。';
   }
 
@@ -922,7 +1458,7 @@ struct Index {
       this.statusText = '先写下一个收信人，再继续。';
       return;
     }
-    this.currentPage = 'emotion';
+    this.navigateForward('emotion');
     this.statusText = '再选一张情绪信纸，把心情放上去。';
   }
 
@@ -950,7 +1486,7 @@ struct Index {
       return;
     }
     this.stopAllEmotionAnimations();
-    this.currentPage = 'writing';
+    this.navigateForward('writing');
     this.statusText = '慢慢写，暂时不用急着发送。';
   }
 
@@ -993,7 +1529,7 @@ struct Index {
       this.statusText = '先写下一点内容，再决定如何安放。';
       return;
     }
-    this.currentPage = 'ritual';
+    this.navigateForward('ritual');
     this.statusText = '选一个属于这封信的数字仪式。';
   }
 
@@ -1131,13 +1667,13 @@ struct Index {
   private applyRitual(index: number): void {
     const ritual: SelectItem = this.ritualOptions[index];
     if (ritual.id === 'spark') {
-      this.currentPage = 'sparkConfirm';
+      this.navigateForward('sparkConfirm');
       this.statusText = '燃成光点后，正文和照片将无法恢复。';
       return;
     }
     if (ritual.id === 'future') {
       this.refreshNotificationPermissionStatus();
-      this.currentPage = 'futureSchedule';
+      this.navigateForward('futureSchedule');
       this.statusText = '选一个未来日期，到那天我再提醒你打开。';
       return;
     }
@@ -1199,7 +1735,8 @@ struct Index {
         echoLine: this.sparkAfterglow.trim().length > 0
           ? this.sparkAfterglow.trim() : '这封信已经化成一颗光。',
         afterglow: this.sparkAfterglow.trim(),
-        keywords: [record.emotion, '光点', '放下'],
+        afterglowEcho: this.afterglowEcho,
+        keywords: [record.emotion, ...this.afterglowKeywords, '光点', '放下'].slice(0, 6),
         moodTag: record.moodTag,
         anonymous: record.anonymous,
         unlockDate: record.unlockDate,
@@ -1481,7 +2018,7 @@ struct Index {
     }
     this.selectedSparkId = id;
     if (this.isSparkCollected(id)) {
-      this.currentPage = 'sparkSky';
+      this.navigateForward('sparkSky');
       return;
     }
     this.collectedSparkIds = [...this.collectedSparkIds, id];
@@ -1492,7 +2029,7 @@ struct Index {
       this.sparkScale = 1;
       this.sparkOpacity = 1;
       if (this.currentPage === 'echo' && this.activeEchoId === id) {
-        this.currentPage = 'sparkSky';
+        this.navigateForward('sparkSky');
       }
     } }, () => {
       this.sparkScale = 0.15;
@@ -1585,7 +2122,7 @@ struct Index {
     this.driftMoodIndex = -1;
     this.driftCustomMood = '';
     this.persistLetters();
-    this.currentPage = 'driftSea';
+    this.navigateBack('driftSea');
     this.statusText = '小刺猬再次带着漂流信驶向远海。想看看时，随时回来。';
   }
 
@@ -1602,7 +2139,7 @@ struct Index {
     this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== record.id);
     this.echoCards = this.echoCards.map((item: LetterRecord) => item.id === record.id ? spark : item);
     this.persistLetters();
-    this.currentPage = 'echo';
+    this.navigateWithReturn('echo', this.contentReturnPage);
     this.statusText = '漂流信已经化成光点，原文和照片不再保留。';
   }
 
@@ -1643,6 +2180,19 @@ struct Index {
     this.letterTitle = '';
     this.letterContent = '';
     this.sparkAfterglow = '';
+    this.writingPrompt = '';
+    this.writingPromptId = '';
+    this.writingPromptContextKey = '';
+    this.writingPromptLoading = false;
+    this.writingPromptSource = '';
+    this.writingPromptError = '';
+    this.writingPromptRecentIds = [];
+    this.afterglowLoading = false;
+    this.afterglowError = '';
+    this.afterglowCandidates = [];
+    this.afterglowKeywords = [];
+    this.afterglowEcho = '';
+    this.afterglowRecentCandidates = [];
     this.photoUris = [];
     this.isAnonymous = false;
     this.moodTag = '私语';
@@ -1667,6 +2217,15 @@ struct Index {
     }
     this.letterTitle = record.title ?? '';
     this.letterContent = record.content;
+    this.writingPrompt = '';
+    this.writingPromptId = '';
+    this.writingPromptContextKey = '';
+    this.writingPromptError = '';
+    this.writingPromptRecentIds = [];
+    this.afterglowCandidates = [];
+    this.afterglowKeywords = [];
+    this.afterglowEcho = '';
+    this.afterglowRecentCandidates = [];
     this.photoUris = [...(record.photoUris ?? [])];
     this.moodTag = record.moodTag;
     this.isAnonymous = record.anonymous;
@@ -1677,7 +2236,7 @@ struct Index {
     if (!fromDrift) {
       this.recalledDriftOrigin = undefined;
     }
-    this.currentPage = 'writing';
+    this.navigateForward('writing');
     this.statusText = '已经帮你把草稿重新铺开了。';
   }
 
@@ -1738,9 +2297,10 @@ struct Index {
     this.driftPeek = false;
     this.driftMoodIndex = -1;
     this.driftCustomMood = '';
-    this.driftDetailEntryOpacity = 0;
-    this.driftDetailEntryOffset = 18;
-    this.currentPage = record.ritual === '漂流' ? 'driftDetail' : 'echo';
+    this.navigateWithReturn(
+      record.ritual === '漂流' ? 'driftDetail' : 'echo',
+      this.contentReturnPage
+    );
   }
 
   private toggleDeleteMenu(recordId: number): void {
@@ -1763,6 +2323,7 @@ struct Index {
       }
     });
     this.cancelFutureReminder(reminderId);
+    this.drafts = this.drafts.filter((item: LetterRecord) => item.id !== targetId);
     this.sealedLetters = this.sealedLetters.filter((item: LetterRecord) => item.id !== targetId);
     this.futureLetters = this.futureLetters.filter((item: LetterRecord) => item.id !== targetId);
     this.driftLetters = this.driftLetters.filter((item: LetterRecord) => item.id !== targetId);
@@ -1775,8 +2336,7 @@ struct Index {
       } else {
         this.activeEchoId = -1;
         if (this.currentPage === 'echo') {
-          this.currentPage = 'home';
-          this.homeTab = 1;
+          this.showHomeTab(1);
         }
       }
     }
@@ -2142,37 +2702,36 @@ struct Index {
         .accessibilityText('返回')
         .onClick(() => {
           if (this.currentPage === 'recipient') {
-            this.playRecipientExitAnimation();
+            this.navigateBack('home');
           } else if (this.currentPage === 'emotion') {
-            this.recipientEntryFromHome = false;
-            this.currentPage = 'recipient';
+            this.navigateBack('recipient');
           } else if (this.currentPage === 'writing') {
             if (this.writingReturnPage === 'driftDetail' && this.recalledDriftOrigin) {
               this.activeEchoId = this.recalledDriftOrigin.id;
               this.driftPeek = false;
-              this.currentPage = 'driftDetail';
+              this.navigateBack('driftDetail');
             } else {
-              this.currentPage = this.writingReturnPage;
+              this.navigateBack(this.writingReturnPage);
             }
           } else if (this.currentPage === 'futureSchedule') {
-            this.currentPage = 'ritual';
+            this.navigateBack('ritual');
           } else if (this.currentPage === 'sparkConfirm') {
-            this.currentPage = 'ritual';
+            this.navigateBack('ritual');
           } else if (this.currentPage === 'driftDetail') {
-            this.currentPage = this.contentReturnPage;
             this.initialDriftReceipt = false;
             this.driftPeek = false;
+            this.navigateBack(this.contentReturnPage);
           } else if (this.currentPage === 'driftSparkConfirm') {
-            this.currentPage = 'driftDetail';
+            this.navigateBack('driftDetail');
           } else if (this.currentPage === 'ritual') {
-            this.currentPage = 'writing';
+            this.navigateBack('writing');
           } else if (this.currentPage === 'echo') {
-            this.currentPage = this.contentReturnPage;
+            this.navigateBack(this.contentReturnPage);
           } else if (this.currentPage === 'archive' ||
             this.currentPage === 'sparkSky' || this.currentPage === 'driftSea') {
-            this.currentPage = this.archiveReturnPage;
+            this.navigateBack(this.archiveReturnPage);
           } else {
-            this.currentPage = 'home';
+            this.navigateBack('home');
           }
         })
 
@@ -2321,16 +2880,11 @@ struct Index {
     .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
     .borderRadius(WeiyuTheme.RADIUS_HERO)
     .shadow({ radius: 18, color: '#10000000', offsetX: 0, offsetY: 7 })
-    .opacity(this.homeEntryOpacity)
-    .translate({ x: 0, y: this.homeEntryOffset })
     .onClick(() => {
       this.resetComposer();
       this.openComposer();
     })
     .accessibilityText('写一封信')
-    .onAppear(() => {
-      this.playHomeEntryAnimation();
-    })
   }
 
   @Builder
@@ -2429,19 +2983,27 @@ struct Index {
             .fontWeight(FontWeight.Medium)
             .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
           Blank()
-          Text(this.getRecordStatusLabel(item))
-            .fontSize(12)
-            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .backgroundColor(this.getRecordStatusBackground(item))
-            .borderRadius(12)
-          Text('...')
-            .fontSize(18)
-            .fontColor('#7A7065')
-            .padding({ left: 8, right: 2, top: 2, bottom: 8 })
-            .onClick(() => {
-              this.toggleDeleteMenu(item.id);
-            })
+          Row({ space: 8 }) {
+            Text(this.getRecordStatusLabel(item))
+              .fontSize(12)
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+              .maxLines(1)
+              .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+              .backgroundColor(this.getRecordStatusBackground(item))
+              .borderRadius(12)
+
+            Text('⋯')
+              .fontSize(20)
+              .fontColor('#7A7065')
+              .width(34)
+              .height(32)
+              .textAlign(TextAlign.Center)
+              .borderRadius(16)
+              .onClick(() => {
+                this.toggleDeleteMenu(item.id);
+              })
+          }
+          .alignItems(VerticalAlign.Center)
         }
         .width('100%')
 
@@ -2568,17 +3130,14 @@ struct Index {
             }
             .width('max-content')
             .padding({ left: 20, right: 20, top: 8, bottom: 28 })
-            .opacity(this.recentEntryOpacity)
-            .translate({ x: 0, y: this.recentEntryOffset })
-            .onAppear(() => {
-              this.playRecentEntryAnimation();
-            })
           }
           .width('100%')
           .height(500)
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .padding({ bottom: 24 })
+          .opacity(this.homeTabContentOpacity)
+          .translate({ x: this.homeTabContentOffset, y: 0 })
         } else if (this.homeTab === 1) {
           Column({ space: 12 }) {
             Text('情绪回声')
@@ -2622,6 +3181,8 @@ struct Index {
           }
           .width('100%')
           .padding({ left: 20, right: 20, bottom: 110 })
+          .opacity(this.homeTabContentOpacity)
+          .translate({ x: this.homeTabContentOffset, y: 0 })
         } else {
           Column({ space: 14 }) {
             Text('我的空间')
@@ -2640,13 +3201,140 @@ struct Index {
             }
             .width('100%')
 
+            if (BuildProfile.DEBUG) {
+              Row({ space: 14 }) {
+                Column({ space: 4 }) {
+                  Text('服务卡片预览')
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+                  Text('开发工具 · 一键切换推荐场景')
+                    .fontSize(12)
+                    .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Text('›')
+                  .fontSize(24)
+                  .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+              }
+              .width('100%')
+              .height(76)
+              .padding({ left: 18, right: 18 })
+              .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
+              .border({ width: 1, color: '#D7E5E7' })
+              .borderRadius(WeiyuTheme.RADIUS_CONTROL)
+              .accessibilityText('进入服务卡片预览')
+              .onClick(() => {
+                this.navigateForward('serviceCardPreview');
+              })
+            }
+
           }
           .width('100%')
           .padding({ left: 20, right: 20, bottom: 110 })
+          .opacity(this.homeTabContentOpacity)
+          .translate({ x: this.homeTabContentOffset, y: 0 })
         }
       }
       .width('100%')
     }
+  }
+
+  @Builder
+  private buildServiceCardPreviewPage() {
+    Scroll() {
+      Column({ space: 18 }) {
+        this.buildBackHeader('服务卡片预览', '开发调试工具，不会修改真实信件。')
+
+        Column({ space: 8 }) {
+          Row() {
+            Text('当前场景')
+              .fontSize(12)
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+            Blank()
+            Text(this.serviceCardPreviewScene === 'auto' ? '跟随真实数据' : '预览模式')
+              .fontSize(11)
+              .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+              .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+              .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
+              .borderRadius(12)
+          }
+          .width('100%')
+
+          Text(this.getServiceCardPreviewTitle())
+            .fontSize(22)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+            .width('100%')
+
+          Text('点选下方场景后，桌面上的「未语」卡片会立即切换。点击预览卡片会回到这里。')
+            .fontSize(13)
+            .lineHeight(21)
+            .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+            .width('100%')
+        }
+        .width('100%')
+        .padding(18)
+        .backgroundColor(WeiyuTheme.COLOR_SURFACE)
+        .border({ width: 1, color: WeiyuTheme.COLOR_BORDER })
+        .borderRadius(WeiyuTheme.RADIUS_CARD)
+
+        Column({ space: 10 }) {
+          ForEach(this.serviceCardPreviewOptions, (item: ServiceCardPreviewOption) => {
+            Row({ space: 14 }) {
+              Column({ space: 4 }) {
+                Text(item.title)
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+                Text(item.subtitle)
+                  .fontSize(12)
+                  .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
+              Text(this.serviceCardPreviewScene === item.id ? '已应用' : '预览')
+                .fontSize(12)
+                .fontWeight(this.serviceCardPreviewScene === item.id ? FontWeight.Medium : FontWeight.Regular)
+                .fontColor(this.serviceCardPreviewScene === item.id ? WeiyuTheme.COLOR_WHITE : WeiyuTheme.COLOR_ACCENT_STRONG)
+                .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+                .backgroundColor(this.serviceCardPreviewScene === item.id ? WeiyuTheme.COLOR_ACCENT_STRONG : WeiyuTheme.COLOR_ACCENT_SOFT)
+                .borderRadius(15)
+            }
+            .width('100%')
+            .height(70)
+            .padding({ left: 16, right: 14 })
+            .backgroundColor(this.serviceCardPreviewScene === item.id ? '#F7FAFA' : WeiyuTheme.COLOR_SURFACE)
+            .border({
+              width: this.serviceCardPreviewScene === item.id ? 1.5 : 1,
+              color: this.serviceCardPreviewScene === item.id ? WeiyuTheme.COLOR_ACCENT : WeiyuTheme.COLOR_BORDER
+            })
+            .borderRadius(WeiyuTheme.RADIUS_CONTROL)
+            .accessibilityText(`预览${item.title}`)
+            .onClick(() => {
+              this.selectServiceCardPreviewScene(item.id);
+            })
+          }, (item: ServiceCardPreviewOption) => item.id)
+        }
+        .width('100%')
+
+        Text('检查完成后请选择“自动推荐”，服务卡片就会重新根据真实信件与时间自动判断。')
+          .fontSize(12)
+          .lineHeight(20)
+          .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+          .width('100%')
+          .padding({ left: 4, right: 4, bottom: 30 })
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 30 })
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -2693,15 +3381,6 @@ struct Index {
         .padding({ left: 20, right: 20, bottom: 40 })
       }
       .width('100%')
-      .translate({ x: this.recipientPageOffset, y: 0 })
-      .onAppear(() => {
-        if (this.recipientEntryFromHome) {
-          this.recipientEntryFromHome = false;
-          this.playRecipientEntryAnimation();
-        } else {
-          this.recipientPageOffset = 0;
-        }
-      })
     }
   }
 
@@ -2717,11 +3396,6 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 28 })
-        .opacity(this.emotionEntryOpacity)
-        .translate({ x: 0, y: this.emotionEntryOffset })
-        .onAppear(() => {
-          this.playEmotionEntryAnimation();
-        })
         .onDisAppear(() => {
           this.stopAllEmotionAnimations();
         })
@@ -2803,6 +3477,68 @@ struct Index {
       }
 
       Column({ space: 12 }) {
+        Column({ space: 9 }) {
+          Row() {
+            Column({ space: 2 }) {
+              Text('给第一句话一点方向')
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
+              if (this.writingPromptSource.length > 0) {
+                Text(this.writingPromptSource)
+                  .fontSize(11)
+                  .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+              }
+            }
+            .alignItems(HorizontalAlign.Start)
+            Blank()
+            if (!this.writingPromptLoading) {
+              Text('换一个')
+                .fontSize(13)
+                .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+                .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+                .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
+                .borderRadius(14)
+                .onClick(() => {
+                  this.loadWritingPrompt(true);
+                })
+            }
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          if (this.writingPromptLoading && this.writingPrompt.length === 0) {
+            Row({ space: 9 }) {
+              LoadingProgress()
+                .width(18)
+                .height(18)
+                .color(WeiyuTheme.COLOR_ACCENT)
+              Text('正在从远方捎来一句提示…')
+                .fontSize(13)
+                .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+            }
+            .width('100%')
+          } else {
+            Text(`“${this.writingPrompt}”`)
+              .fontSize(15)
+              .lineHeight(23)
+              .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+              .width('100%')
+          }
+
+          if (this.writingPromptError.length > 0) {
+            Text(this.writingPromptError)
+              .fontSize(11)
+              .fontColor('#9A806F')
+              .width('100%')
+          }
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+        .backgroundColor('#F1F6F5')
+        .border({ width: 1, color: '#DCE8E6' })
+        .borderRadius(18)
+
         TextInput({ text: this.letterTitle, placeholder: '给这封信写一个标题（选填）' })
           .width('100%')
           .height(52)
@@ -2911,6 +3647,9 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    .onAppear(() => {
+      this.loadWritingPrompt(false);
+    })
   }
 
   @Builder
@@ -2925,11 +3664,6 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 30 })
-        .opacity(this.ritualEntryOpacity)
-        .translate({ x: 0, y: this.ritualEntryOffset })
-        .onAppear(() => {
-          this.playRitualEntryAnimation();
-        })
       }
       .width('100%')
     }
@@ -3002,6 +3736,83 @@ struct Index {
               .fontSize(12)
               .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
               .width('100%')
+
+            Row({ space: 7 }) {
+              if (this.afterglowLoading) {
+                LoadingProgress()
+                  .width(18)
+                  .height(18)
+                  .color(WeiyuTheme.COLOR_ACCENT_STRONG)
+                Text('正在从余光库里寻找一句…')
+                  .fontSize(13)
+                  .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+              } else {
+                Text('✦')
+                  .fontSize(14)
+                  .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+                Text(this.afterglowCandidates.length > 0 ? '换一组余光' : '余光灵感')
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+              }
+            }
+            .height(42)
+            .padding({ left: 14, right: 14 })
+            .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
+            .borderRadius(16)
+            .opacity(this.afterglowLoading ? 0.72 : 1)
+            .onClick(() => {
+              this.requestAfterglowIdeas();
+            })
+
+            Text('按写信对象与心情从远端模板库组合，不读取或上传正文。')
+              .fontSize(11)
+              .lineHeight(18)
+              .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+              .width('100%')
+
+            if (this.afterglowCandidates.length > 0) {
+              Column({ space: 9 }) {
+                Text('选一句放进余光里，也可以再修改')
+                  .fontSize(12)
+                  .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+                  .width('100%')
+                ForEach(this.afterglowCandidates, (candidate: string, index: number) => {
+                  Row({ space: 10 }) {
+                    Text(`${index + 1}`)
+                      .fontSize(11)
+                      .fontColor(WeiyuTheme.COLOR_ACCENT_STRONG)
+                      .width(22)
+                      .height(22)
+                      .textAlign(TextAlign.Center)
+                      .backgroundColor(WeiyuTheme.COLOR_ACCENT_SOFT)
+                      .borderRadius(11)
+                    Text(candidate)
+                      .fontSize(13)
+                      .lineHeight(20)
+                      .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+                      .layoutWeight(1)
+                  }
+                  .width('100%')
+                  .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+                  .backgroundColor(this.sparkAfterglow === candidate ? '#E4EFED' : WeiyuTheme.COLOR_SURFACE)
+                  .border({ width: 1, color: this.sparkAfterglow === candidate ? '#A9C3C0' : WeiyuTheme.COLOR_BORDER })
+                  .borderRadius(15)
+                  .onClick(() => {
+                    this.selectAfterglowCandidate(candidate);
+                  })
+                }, (candidate: string, index: number) => `${index}-${candidate}`)
+              }
+              .width('100%')
+            }
+
+            if (this.afterglowError.length > 0) {
+              Text(this.afterglowError)
+                .fontSize(12)
+                .lineHeight(19)
+                .fontColor('#9B6D62')
+                .width('100%')
+            }
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
@@ -3024,7 +3835,7 @@ struct Index {
             this.buildSecondaryAction('再想一想')
           }
           .onClick(() => {
-            this.currentPage = 'ritual';
+            this.navigateBack('ritual');
           })
         }
         .width('100%')
@@ -3109,7 +3920,7 @@ struct Index {
           }
           .width('48%')
           .onClick(() => {
-            this.currentPage = 'ritual';
+            this.navigateBack('ritual');
           })
 
           Column() {
@@ -3247,7 +4058,7 @@ struct Index {
               this.buildSecondaryAction('先让它继续漂流')
             }
             .onClick(() => {
-              this.currentPage = 'home';
+              this.showHomeTab(0);
             })
           } else {
             Column() {
@@ -3263,8 +4074,7 @@ struct Index {
                 this.collectActiveSpark();
                 return;
               }
-              this.homeTab = 1;
-              this.currentPage = 'home';
+              this.showHomeTab(1);
               this.statusText = this.getActiveEcho().ritual === '燃成光点'
                 ? '这颗光点已经留在你的星空里。'
                 : '回声卡已经留在你的信箱里。';
@@ -3274,7 +4084,7 @@ struct Index {
               this.buildSecondaryAction('返回信箱')
             }
             .onClick(() => {
-              this.currentPage = 'home';
+              this.showHomeTab(0);
             })
           }
         }
@@ -3417,6 +4227,12 @@ struct Index {
               .fontSize(16)
               .lineHeight(26)
               .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+            if ((item.afterglowEcho ?? item.aiEcho ?? '').length > 0) {
+              Text(`余光回声 · ${item.afterglowEcho ?? item.aiEcho}`)
+                .fontSize(12)
+                .lineHeight(20)
+                .fontColor(WeiyuTheme.COLOR_TEXT_MUTED)
+            }
           }
           .width('100%')
           .padding(22)
@@ -3662,8 +4478,7 @@ struct Index {
             }
             .onClick(() => {
               this.initialDriftReceipt = false;
-              this.homeTab = 1;
-              this.currentPage = 'home';
+              this.showHomeTab(1);
               this.statusText = '回声卡已经保存到回声里了。';
             })
           } else if (!this.driftPeek) {
@@ -3854,7 +4669,7 @@ struct Index {
               if (this.isDriftReturned(this.getActiveEcho())) {
                 this.continueDrift(this.getActiveEcho());
               } else {
-                this.currentPage = 'driftSea';
+                this.navigateBack('driftSea');
               }
             })
 
@@ -3885,7 +4700,7 @@ struct Index {
             .hoverEffect(HoverEffect.Scale)
             .accessibilityText('让它化成一束光，永久清除正文与照片')
             .onClick(() => {
-              this.currentPage = 'driftSparkConfirm';
+              this.navigateForward('driftSparkConfirm');
             })
           }
           .width('100%')
@@ -3897,12 +4712,9 @@ struct Index {
       }
       .width('100%')
       .padding({ left: 20, right: 20, bottom: 36 })
-      .opacity(this.driftDetailEntryOpacity)
-      .translate({ x: 0, y: this.driftDetailEntryOffset })
       .onAppear(() => {
         this.startDriftMotion();
         this.startDriftHedgehogAnimation();
-        this.playDriftDetailEntryAnimation();
       })
       .onDisAppear(() => {
         this.stopDriftMotion();
@@ -3955,7 +4767,7 @@ struct Index {
           this.buildSecondaryAction('让它再等等')
         }
         .onClick(() => {
-          this.currentPage = 'driftDetail';
+          this.navigateBack('driftDetail');
         })
       }
       .width('100%')
@@ -3979,45 +4791,46 @@ struct Index {
                   .fontWeight(FontWeight.Medium)
                   .fontColor(WeiyuTheme.COLOR_TEXT_PRIMARY)
                 Blank()
-                Stack({ alignContent: Alignment.TopEnd }) {
+                Row({ space: 8 }) {
                   Text(this.getRecordStatusLabel(item))
                     .fontSize(12)
                     .fontColor(WeiyuTheme.COLOR_TEXT_SECONDARY)
+                    .maxLines(1)
                     .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                     .backgroundColor(this.getRecordStatusBackground(item))
                     .borderRadius(12)
-                  if (this.archiveKind !== 'draft') {
-                    Text('...')
-                      .fontSize(18)
-                      .fontColor('#7A7065')
-                      .padding({ left: 6, right: 2, top: 2, bottom: 8 })
-                      .onClick(() => {
-                        this.toggleDeleteMenu(item.id);
-                      })
-                  }
-                  if (this.archiveKind !== 'draft' && this.openedMenuId === item.id) {
-                    Column() {
-                      Text('删除')
-                        .fontSize(14)
-                        .fontColor('#9D6666')
-                    }
-                    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-                    .backgroundColor('#FFFDFC')
-                    .borderRadius(14)
-                    .shadow({
-                      radius: 12,
-                      color: '#14000000',
-                      offsetX: 0,
-                      offsetY: 4
+
+                  Text('⋯')
+                    .fontSize(20)
+                    .fontColor('#7A7065')
+                    .width(34)
+                    .height(32)
+                    .textAlign(TextAlign.Center)
+                    .borderRadius(16)
+                    .onClick(() => {
+                      this.toggleDeleteMenu(item.id);
                     })
-                    .margin({ top: 30, right: 2 })
+                }
+                .alignItems(VerticalAlign.Center)
+              }
+              .width('100%')
+
+              if (this.openedMenuId === item.id) {
+                Row() {
+                  Blank()
+                  Text(this.archiveKind === 'draft' ? '删除草稿' : '删除这封信')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#9D6666')
+                    .padding({ left: 14, right: 14, top: 9, bottom: 9 })
+                    .backgroundColor('#F8EEEB')
+                    .borderRadius(14)
                     .onClick(() => {
                       this.deleteRecord(item.id);
                     })
-                  }
                 }
+                .width('100%')
               }
-              .width('100%')
 
               Text(`${item.recipient} · ${item.emotion}`)
                 .fontSize(12)
@@ -4112,8 +4925,7 @@ struct Index {
     .borderRadius(18)
     .accessibilityText(label)
     .onClick(() => {
-      this.homeTab = index;
-      this.currentPage = 'home';
+      this.switchHomeTab(index);
     })
   }
 
@@ -4149,6 +4961,8 @@ struct Index {
       Column() {
         if (this.currentPage === 'home') {
           this.buildHome()
+        } else if (this.currentPage === 'serviceCardPreview' && BuildProfile.DEBUG) {
+          this.buildServiceCardPreviewPage()
         } else if (this.currentPage === 'recipient') {
           this.buildRecipientPage()
         } else if (this.currentPage === 'emotion') {
@@ -4178,6 +4992,7 @@ struct Index {
       .width('100%')
       .height('100%')
       .backgroundColor(WeiyuTheme.COLOR_BACKGROUND)
+      .translate({ x: this.pageSlideOffset, y: 0 })
 
       if (this.currentPage === 'home') {
         this.buildBottomBar()
@@ -4186,5 +5001,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(WeiyuTheme.COLOR_BACKGROUND)
+    .clip(true)
   }
 }
