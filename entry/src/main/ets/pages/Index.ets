@@ -148,8 +148,9 @@ struct Index {
   @State private homeEntryOpacity: number = 0;
   @State private recentEntryOffset: number = 18;
   @State private recentEntryOpacity: number = 0;
-  @State private recipientEntryOffset: number = 18;
-  @State private recipientEntryOpacity: number = 0;
+  @State private recipientPageOffset: number = 480;
+  private recipientPageLeaving: boolean = false;
+  private recipientEntryFromHome: boolean = false;
   @State private emotionEntryOffset: number = 18;
   @State private emotionEntryOpacity: number = 0;
   @State private ritualEntryOffset: number = 18;
@@ -634,17 +635,35 @@ struct Index {
   }
 
   private playRecipientEntryAnimation(): void {
-    this.recipientEntryOpacity = 0;
-    this.recipientEntryOffset = 18;
+    this.recipientPageLeaving = false;
+    this.recipientPageOffset = 480;
     setTimeout(() => {
       animateTo({
-        duration: 480,
+        duration: 360,
         curve: Curve.EaseOut
       }, () => {
-        this.recipientEntryOpacity = 1;
-        this.recipientEntryOffset = 0;
+        this.recipientPageOffset = 0;
       });
-    }, 60);
+    }, 20);
+  }
+
+  private playRecipientExitAnimation(): void {
+    if (this.recipientPageLeaving) {
+      return;
+    }
+    this.recipientPageLeaving = true;
+    animateTo({
+      duration: 300,
+      curve: Curve.EaseIn,
+      onFinish: () => {
+        this.currentPage = 'home';
+        this.homeTab = 0;
+        this.recipientPageOffset = 480;
+        this.recipientPageLeaving = false;
+      }
+    }, () => {
+      this.recipientPageOffset = 480;
+    });
   }
 
   private playEmotionEntryAnimation(): void {
@@ -870,6 +889,7 @@ struct Index {
   private openComposer(): void {
     this.homeTab = 0;
     this.resetComposer();
+    this.recipientEntryFromHome = true;
     this.currentPage = 'recipient';
     this.statusText = '先决定，这封信想写给谁。';
   }
@@ -2121,7 +2141,10 @@ struct Index {
         .borderRadius(24)
         .accessibilityText('返回')
         .onClick(() => {
-          if (this.currentPage === 'emotion') {
+          if (this.currentPage === 'recipient') {
+            this.playRecipientExitAnimation();
+          } else if (this.currentPage === 'emotion') {
+            this.recipientEntryFromHome = false;
             this.currentPage = 'recipient';
           } else if (this.currentPage === 'writing') {
             if (this.writingReturnPage === 'driftDetail' && this.recalledDriftOrigin) {
@@ -2668,13 +2691,17 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 40 })
-        .opacity(this.recipientEntryOpacity)
-        .translate({ x: 0, y: this.recipientEntryOffset })
-        .onAppear(() => {
-          this.playRecipientEntryAnimation();
-        })
       }
       .width('100%')
+      .translate({ x: this.recipientPageOffset, y: 0 })
+      .onAppear(() => {
+        if (this.recipientEntryFromHome) {
+          this.recipientEntryFromHome = false;
+          this.playRecipientEntryAnimation();
+        } else {
+          this.recipientPageOffset = 0;
+        }
+      })
     }
   }
 
